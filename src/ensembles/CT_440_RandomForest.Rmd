@@ -1,0 +1,610 @@
+---
+title: An R Markdown document converted from "src/ensembles/z440_RandomForest.ipynb"
+output: html_document
+---
+
+# 4. Ensembles de Arboles de Decision
+
+## 4.3 Random Forest
+
+*Random Forest* es un algoritmo de ensembles de arboles de decision creado por Leo Brieman en 1995-2006
+https://link.springer.com/content/pdf/10.1023/a:1010933404324.pdf
+
+La página original es:
+https://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm
+
+Dos buenos videos para seguir el paso a paso de Random Forest y aplicaciones:
+* https://www.youtube.com/watch?v=J4Wdy0Wc_xQ
+* https://www.youtube.com/watch?v=sQ870aTKqiM
+
+Qué tipo de perturbaciones se realizan en Random Forest
+
+*   Se perturba el dataset, con la técnica de bagging = Bootstrap Aggregating
+*   Tambien se perturba el algoritmo, utiliza random en cada split
+
+Cada arbolito de Random Forest se entrena sobre un dataset perturbado, que tiene :
+* todas las columnas originales (esta es una GRAN diferencia con  Arboles Azarosos)
+* la misma *cantidad* de registros del dataset original, PERO generados por la técnica de sampleo con reposición del dataset original.
+
+A pesar de que Leo Brieman es también el inventor de CART (Classification and Regression Trees) Random Forest no corre el algoritmo CART de la libreria rpart, sino un CART perturbado, en donde cada split NO se hace sobre todos los campos del dataset, sino sobre un csubconjunto tomado al azar, esa cantidad es el hiperparámetro *mtry*
+
+#### 4.3.1  Seteo del ambiente en Google Colab
+
+Esta parte se debe correr con el runtime en Python3
+<br>Ir al menu, Runtime -> Change Runtime Type -> Runtime type ->  **Python 3**
+
+Conectar la virtual machine donde esta corriendo Google Colab con el  Google Drive, para poder tener persistencia de archivos
+
+```{r}
+# primero establecer el Runtime de Python 3
+from google.colab import drive
+drive.mount('/content/.drive')
+```
+
+Para correr la siguiente celda es fundamental en Arranque en Frio haber copiado el archivo kaggle.json al Google Drive, en la carpeta indicada en el instructivo
+
+<br>los siguientes comando estan en shell script de Linux
+*   Crear las carpetas en el Google Drive
+*   "instalar" el archivo kaggle.json desde el Google Drive a la virtual machine para que pueda ser utilizado por la libreria  kaggle de Python
+*   Bajar el  **dataset_pequeno**  al  Google Drive  y tambien al disco local de la virtual machine que esta corriendo Google Colab
+
+
+```{shell}
+
+mkdir -p "/content/.drive/My Drive/labo1"
+mkdir -p "/content/buckets"
+ln -s "/content/.drive/My Drive/labo1" /content/buckets/b1
+
+mkdir -p ~/.kaggle
+cp /content/buckets/b1/kaggle/kaggle.json  ~/.kaggle
+chmod 600 ~/.kaggle/kaggle.json
+
+
+mkdir -p /content/buckets/b1/exp
+mkdir -p /content/buckets/b1/datasets
+mkdir -p /content/datasets
+
+
+
+archivo_origen="https://storage.googleapis.com/open-courses/austral2025-af91/dataset_pequeno.csv"
+archivo_destino="/content/datasets/dataset_pequeno.csv"
+archivo_destino_bucket="/content/buckets/b1/datasets/dataset_pequeno.csv"
+
+if ! test -f $archivo_destino_bucket; then
+  wget  $archivo_origen  -O $archivo_destino_bucket
+fi
+
+
+if ! test -f $archivo_destino; then
+  cp  $archivo_destino_bucket  $archivo_destino
+fi
+```
+
+### 4.4  Random Forest, una corrida
+
+El tiempo de corrida de este punto es de alrededor de 8 minutos
+
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+
+limpio el ambiente de R
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+```{r}
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+**ranger** es una de las muchas librerías en lenguage R que implementa el algoritmo *Random Forest*, tiene la ventaja que corre el paralelo, utilizando todos los nucleos del procesador.
+
+```{r}
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+
+# ranger se usa para procesar
+if( !require("ranger") ) install.packages("ranger")
+require("ranger")
+
+# randomForest  solo se usa para imputar nulos
+if( !require("randomForest") ) install.packages("randomForest")
+require("randomForest")
+```
+
+Aqui debe cargar SU semilla primigenia y
+
+```{r}
+PARAM <- list()
+PARAM$experimento <- 440
+PARAM$semilla_primigenia <- 102191
+
+PARAM$ranger$num.trees <- 300 # cantidad de arboles
+PARAM$ranger$mtry <- 13 # cantidad de atributos que participan en cada split
+PARAM$ranger$min.node.size <- 50 # tamaño minimo de las hojas
+PARAM$ranger$max.depth <- 10 # 0 significa profundidad infinita
+```
+
+```{r}
+# carpeta de trabajo
+setwd("/content/buckets/b1/exp")
+experimento_folder <- paste0("KA", PARAM$experimento)
+dir.create(experimento_folder, showWarnings=FALSE)
+setwd( paste0("/content/buckets/b1/exp/", experimento_folder ))
+```
+
+```{r}
+# lectura del dataset
+dataset <- fread("/content/datasets/dataset_pequeno.csv")
+```
+
+```{r}
+#  estas dos lineas estan relacionadas con el Data Drifting
+# asigno un valor muy negativo
+
+if( "Master_Finiciomora" %in% colnames(dataset) )
+  dataset[ is.na(Master_Finiciomora) , Master_Finiciomora := -999 ]
+
+if( "Visa_Finiciomora" %in% colnames(dataset) )
+  dataset[ is.na(Visa_Finiciomora) , Visa_Finiciomora :=  -999 ]
+```
+
+```{r}
+# defino los dataset de entrenamiento y aplicacion
+dtrain <- dataset[foto_mes == 202107]
+dfuture <- dataset[foto_mes == 202109]
+```
+
+```{r}
+set.seed( PARAM$semilla_primigenia ) # Establezco la semilla aleatoria
+
+
+# ranger necesita la clase de tipo factor
+factorizado <- as.factor(dtrain$clase_ternaria)
+dtrain[, clase_ternaria := factorizado]
+```
+
+```{r}
+# Ranger NO acepta valores nulos
+# Leo Breiman, ¿por que le temias a los nulos?
+# imputo los nulos, ya que ranger no acepta nulos
+dtrain <- na.roughfix(dtrain)
+
+```
+
+```{r}
+setorder(dtrain, clase_ternaria) # primero quedan los BAJA+1, BAJA+2, CONTINUA
+
+# genero el modelo de Random Forest llamando a ranger()
+modelo <- ranger(
+  formula= "clase_ternaria ~ .",
+  data= dtrain,
+  probability= TRUE, # para que devuelva las probabilidades
+  num.trees= PARAM$ranger$num.trees,
+  mtry= PARAM$ranger$mtry,
+  min.node.size= PARAM$ranger$min.node.size,
+  max.depth= PARAM$ranger$max.depth
+)
+```
+
+```{r}
+# Carpinteria necesaria sobre  dfuture
+# como quiere la Estadistica Clasica, imputar nulos por separado
+# ( aunque en este caso ya tengo los datos del futuro de antemano
+#  pero bueno, sigamos el librito de estos fundamentalistas a rajatabla ...
+
+dfuture[, clase_ternaria := NULL]
+dfuture <- na.roughfix(dfuture)
+```
+
+```{r}
+tb_prediccion <- dfuture[, list(numero_de_cliente)]
+```
+
+```{r}
+# aplico el modelo a los datos que no tienen clase
+# aplico el modelo recien creado a los datos del futuro
+prediccion <- predict(modelo, dfuture)
+
+tb_prediccion[, prob := prediccion$predictions[, "BAJA+2"] ]
+```
+
+```{r}
+tb_prediccion[, Predicted := as.numeric(prob > (1/40))]
+```
+
+```{r}
+archivo_kaggle <- paste0("KA", PARAM$experimento,".csv")
+
+# grabo el archivo
+fwrite( tb_prediccion[, list(numero_de_cliente, Predicted)],
+ file= archivo_kaggle,
+ sep= ","
+)
+```
+
+```{r}
+# subida a Kaggle
+comando <- "kaggle competitions submit"
+competencia <- "-c labo-i-2025-virtual-analista-sr"
+arch <- paste( "-f", archivo_kaggle)
+
+mensaje <- paste0("-m 'num.trees=", PARAM$ranger$num.trees, "  mtry=", PARAM$ranger$mtry, "  min.node.size=", PARAM$ranger$min.node.size, " max.depth=", PARAM$ranger$max.depth, "'" )
+linea <- paste( comando, competencia, arch, mensaje)
+salida <- system(linea, intern= TRUE)
+cat(salida)
+```
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+
+
+---
+
+
+### 4.5  Random Forest  optimizacion de hiperparámetros
+
+Random Forest es un algoritmo que quedó obsoleto luego de la aparición de  XGBoost y LightGBM, debido a lo lento de las librerías que lo implementan.
+<br> El siguiente script se brinda simplemente a modo pedagógico, advirtiendo a los alumn@s que demanda más de 24 horas para correr, y los resultados son mediocres.
+
+limpio el ambiente de R
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+```{r}
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+**ranger** es una de las muchas librerías en lenguage R que implementa el algoritmo *Random Forest*, tiene la ventaja que corre el paralelo, utilizando todos los nucleos del procesador.
+
+```{r}
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+require("parallel")
+
+if( !require("primes") ) install.packages("primes")
+require("primes")
+
+if( !require("rlist") ) install.packages("rlist")
+require("rlist")
+
+# ranger se usa para procesar
+if( !require("ranger") ) install.packages("ranger")
+require("ranger")
+
+# randomForest  solo se usa para imputar nulos
+if( !require("randomForest") ) install.packages("randomForest")
+require("randomForest")
+
+
+if( !require("DiceKriging") ) install.packages("DiceKriging")
+require("DiceKriging")
+
+if( !require("mlrMBO") ) install.packages("mlrMBO")
+require("mlrMBO")
+```
+
+Aqui debe cargar SU semilla primigenia y
+
+```{r}
+PARAM <- list()
+PARAM$experimento <- 450
+PARAM$semilla_primigenia <- 102191
+
+PARAM$hyperparametertuning$iteraciones <- 100
+PARAM$hyperparametertuning$xval_folds <- 5
+PARAM$hyperparametertuning$POS_ganancia <- 117000
+PARAM$hyperparametertuning$NEG_ganancia <- -3000
+
+# Estructura que define los hiperparámetros y sus rangos
+#  la letra L al final significa ENTERO
+# max.depth 0 significa profundidad infinita
+PARAM$hyperparametertuning$hs <- makeParamSet(
+  makeIntegerParam("num.trees", lower= 20L, upper= 500L),
+  makeIntegerParam("max.depth", lower= 1L, upper= 30L),
+  makeIntegerParam("min.node.size", lower= 1L, upper= 1000L),
+  makeIntegerParam("mtry", lower= 2L, upper= 50L)
+)
+```
+
+```{r}
+# graba a un archivo los componentes de lista
+# para el primer registro, escribe antes los titulos
+
+loguear <- function(
+    reg, arch= NA, folder= "./work/",
+    ext= ".txt", verbose= TRUE) {
+
+  archivo <- arch
+  if (is.na(arch)) archivo <- paste0(folder, substitute(reg), ext)
+
+  if (!file.exists(archivo)) # Escribo los titulos
+    {
+      linea <- paste0(
+        "fecha\t",
+        paste(list.names(reg), collapse= "\t"), "\n"
+      )
+
+      cat(linea, file= archivo)
+    }
+
+  linea <- paste0(
+    format(Sys.time(), "%Y%m%d %H%M%S"), "\t", # la fecha y hora
+    gsub(", ", "\t", toString(reg)), "\n"
+  )
+
+  cat(linea, file= archivo, append= TRUE) # grabo al archivo
+
+  if (verbose) cat(linea) # imprimo por pantalla
+}
+```
+
+```{r}
+# particionar agrega una columna llamada fold a un dataset
+#  que consiste en una particion estratificada segun agrupa
+# particionar( data=dataset, division=c(70,30),
+#  agrupa=clase_ternaria, seed=semilla)   crea una particion 70, 30
+# particionar( data=dataset, division=c(1,1,1,1,1),
+#   agrupa=clase_ternaria, seed=semilla)   divide el dataset en 5 particiones
+
+particionar <- function(
+    data, division, agrupa= "",
+    campo= "fold", start= 1, seed= NA) {
+
+  if (!is.na(seed)) set.seed(seed)
+
+  bloque <- unlist(mapply(function(x, y) {
+    rep(y, x)
+  }, division, seq(from= start, length.out= length(division))))
+
+  data[, (campo) := sample(rep(bloque, ceiling(.N / length(bloque))))[1:.N],
+    by= agrupa
+  ]
+}
+```
+
+```{r}
+# es un paso del Cross Validation
+# utiliza el fold  fold_test para testear y el resto para entrenar
+
+ranger_Simple <- function(fold_test, pdata, param) {
+  # genero el modelo
+
+  set.seed(PARAM$semillas[2])
+
+  modelo <- ranger(
+    formula= "clase_binaria ~ .",
+    data= pdata[fold != fold_test],
+    probability= TRUE, # para que devuelva las probabilidades
+    num.trees= param$num.trees,
+    mtry= param$mtry,
+    min.node.size= param$min.node.size,
+    max.depth= param$max.depth
+  )
+
+  prediccion <- predict(modelo, pdata[fold == fold_test])
+
+  ganancia_testing <- pdata[
+    fold == fold_test,
+    sum((prediccion$predictions[, "POS"] > 1 / 40) *
+      ifelse(clase_binaria == "POS",
+        PARAM$hyperparametertuning$POS_ganancia,
+        PARAM$hyperparametertuning$NEG_ganancia
+      ))
+  ]
+
+  return(ganancia_testing)
+}
+```
+
+```{r}
+# realiza Cross Validation, promediando las ganancias de los folds de testing
+
+ranger_CrossValidation <- function(
+    data, param,
+    pcampos_buenos, qfolds, pagrupa, semilla) {
+
+  divi <- rep(1, qfolds)
+  particionar(data, divi, seed= semilla, agrupa= pagrupa)
+
+  ganancias <- mcmapply(ranger_Simple,
+    seq(qfolds), # 1 2 3 4 5
+    MoreArgs= list(data, param),
+    SIMPLIFY= FALSE,
+    mc.cores= 1
+  ) # dejar esto en  1, porque ranger ya corre en paralelo
+
+  data[, fold := NULL] # elimino el campo fold
+
+  # devuelvo la ganancia promedio normalizada
+  ganancia_promedio <- mean(unlist(ganancias))
+  ganancia_promedio_normalizada <- ganancia_promedio * qfolds
+
+  return(ganancia_promedio_normalizada)
+}
+```
+
+```{r}
+# esta funcion solo puede recibir los parametros que se estan optimizando
+# el resto de los parametros se pasan como variables globales
+
+EstimarGanancia_ranger <- function(x) {
+  GLOBAL_iteracion <<- GLOBAL_iteracion + 1
+
+  xval_folds <- PARAM$hyperparametertuning$xval_folds
+
+  ganancia <- ranger_CrossValidation(dataset,
+    param= x,
+    qfolds= xval_folds,
+    pagrupa= "clase_binaria",
+    semilla= PARAM$semillas[1]
+  )
+
+  # logueo
+  xx <- x
+  xx$xval_folds <- xval_folds
+  xx$ganancia <- ganancia
+  xx$iteracion <- GLOBAL_iteracion
+  loguear(xx, arch= klog)
+
+  # si es ganancia superadora la almaceno en mejor
+  if( ganancia > GLOBAL_mejor ) {
+    GLOBAL_mejor <<- ganancia
+    loguear(xx, arch= klog_mejor)
+  }
+
+
+  return(ganancia)
+}
+```
+
+aqui se inicia el programa
+
+```{r}
+# carpeta de trabajo
+setwd("/content/buckets/b1/exp")
+experimento_folder <- paste0("HT", PARAM$experimento)
+dir.create(experimento_folder, showWarnings=FALSE)
+setwd( paste0("/content/buckets/b1/exp/", experimento_folder ))
+```
+
+```{r}
+# genero numeros primos
+primos <- generate_primes(min= 100000, max= 1000000)
+set.seed(PARAM$semilla_primigenia) # inicializo
+# me quedo con PARAM$qsemillas   semillas
+PARAM$semillas <- sample(primos, 2 )
+```
+
+```{r}
+# lectura del dataset
+dataset <- fread("/content/datasets/dataset_pequeno.csv", stringsAsFactors= TRUE)
+```
+
+```{r}
+dataset <- dataset[foto_mes %in% c(202107)]
+```
+
+```{r}
+#  estas dos lineas estan relacionadas con el Data Drifting
+# asigno un valor muy negativo
+
+if( "Master_Finiciomora" %in% colnames(dataset) )
+  dataset[ is.na(Master_Finiciomora) , Master_Finiciomora := -999 ]
+
+if( "Visa_Finiciomora" %in% colnames(dataset) )
+  dataset[ is.na(Visa_Finiciomora) , Visa_Finiciomora :=  -999 ]
+```
+
+```{r}
+set.seed( PARAM$semilla_primigenia ) # Establezco la semilla aleatoria
+```
+
+```{r}
+# en estos archivos quedan los resultados
+kbayesiana <- paste0("HT", PARAM$experimento, ".RDATA")
+klog <- paste0("HT", PARAM$experimento, ".txt")
+klog_mejor <- paste0("HT", PARAM$experimento, "_mejor.txt")
+
+GLOBAL_iteracion <- 0 # inicializo la variable global
+GLOBAL_mejor <- -Inf
+
+# si ya existe el archivo log, traigo hasta donde llegue
+if (file.exists(klog)) {
+  tabla_log <- fread(klog)
+  GLOBAL_iteracion <- nrow(tabla_log)
+}
+```
+
+```{r}
+# paso a trabajar con clase binaria POS={BAJA+2}   NEG={BAJA+1, CONTINUA}
+dataset[, clase_binaria :=
+  as.factor(ifelse(clase_ternaria == "BAJA+2", "POS", "NEG"))]
+
+dataset[, clase_ternaria := NULL] # elimino la clase_ternaria, ya no la necesito
+```
+
+```{r}
+# Ranger NO acepta valores nulos
+# Leo Breiman, ¿por que le temias a los nulos?
+# imputo los nulos, ya que ranger no acepta nulos
+
+dataset <- na.roughfix(dataset)
+```
+
+```{r}
+# Aqui comienza la configuracion de la Bayesian Optimization
+
+configureMlr(show.learner.output = FALSE)
+
+funcion_optimizar <- EstimarGanancia_ranger
+
+# configuro la busqueda bayesiana,  los hiperparametros que se van a optimizar
+# por favor, no desesperarse por lo complejo
+obj.fun <- makeSingleObjectiveFunction(
+  fn= funcion_optimizar,
+  minimize= FALSE, # estoy Maximizando la ganancia
+  noisy= TRUE,
+  par.set= PARAM$hyperparametertuning$hs,
+  has.simple.signature= FALSE
+)
+
+ctrl <- makeMBOControl(save.on.disk.at.time= 600, save.file.path= kbayesiana)
+
+ctrl <- setMBOControlTermination(
+  ctrl,
+  iters= PARAM$hyperparametertuning$iteraciones
+)
+
+ctrl <- setMBOControlInfill(ctrl, crit= makeMBOInfillCritEI())
+
+surr.km <- makeLearner(
+  "regr.km",
+  predict.type= "se",
+  covtype= "matern3_2",
+  control= list(trace= TRUE)
+)
+```
+
+```{r}
+# inicio la optimizacion bayesiana
+
+if (!file.exists(kbayesiana)) {
+  run <- mbo(obj.fun, learner= surr.km, control= ctrl)
+} else {
+  run <- mboContinue(kbayesiana)
+} # retomo en caso que ya exista
+```
+
+```{r}
+# analizo la salida de la bayesiana
+
+tb_bayesiana <- fread(klog)
+setorder( tb_bayesiana, -ganancia)
+tb_bayesiana
+```
+
+```{r}
+# mejores parametros
+
+print( tb_bayesiana[1] )
+```
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+
+
+---
+
+
