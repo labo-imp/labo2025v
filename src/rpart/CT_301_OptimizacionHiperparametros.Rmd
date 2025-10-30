@@ -1,123 +1,109 @@
 ---
 title: An R Markdown document converted from "src/rpart/z301_OptimizacionHiperparametros.ipynb"
 output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
 # 3 Optimización de Hiperpárametros
 
 ## 3.01 Introduccion
-En general los algoritmos que generan modelos predictivos poseen hiperparámetros que *dado un dataset* deben ser optimizados.
-<br> La invocación de uno de esos algoritmos sin hiperparámetros no es más que
-invocarlos con hiperparámetros por default definidos por el fabricante. Por ejemplo en el caso de la librería **rpart** es cp=0.01, maxdepth=30, minsplit=20, minbucket=6,  lo que en nuestro dataset genera un arbol de un solo nodo (decimos "no se abre el arbol"); la razon de esto es la proporcion de "BAJA+1" y "BAJA+2"
 
-En el primer notebook de la asignatura usted probó optimizar manualmente los hiperparámetros entrenando en un mes completo y viendo los resultados directamente en el Public Leaderboard, que es una porción de los datos de futuro.
-<br> En el mundo real no se dispone jamás de la clase del futuro, con lo cual lo anterior es meramente un artifical divertimento.
-<br> La solución es estimar la bondad de un set de hiperparámetros en alguna combinación de:
-  * Una sola partición de  <training, testing>
-  * Multiples particiones de <training, testing>
-  * El método de  k-fold Cross Validation , generalmente con n>=5
-  * Utilizar   n-repated  k-fold Cross Validation
-  * Leave One Out  si la cardinalidad del dataset y el poder de cómputo se lo permiten
+En general los algoritmos que generan modelos predictivos poseen
+hiperparámetros que *dado un dataset* deben ser optimizados. <br> La
+invocación de uno de esos algoritmos sin hiperparámetros no es más que
+invocarlos con hiperparámetros por default definidos por el fabricante.
+Por ejemplo en el caso de la librería **rpart** es cp=0.01, maxdepth=30,
+minsplit=20, minbucket=6, lo que en nuestro dataset genera un arbol de
+un solo nodo (decimos "no se abre el arbol"); la razon de esto es la
+proporcion de "BAJA+1" y "BAJA+2"
 
-Luego de comenzar a trabajar con el método de  "Multiples particiones de <training, testing>  se le invitó a extender un esqueleto de código del método de **Optimización de Hiperparámetros por Grid Search**
+En el primer notebook de la asignatura usted probó optimizar manualmente
+los hiperparámetros entrenando en un mes completo y viendo los
+resultados directamente en el Public Leaderboard, que es una porción de
+los datos de futuro. <br> En el mundo real no se dispone jamás de la
+clase del futuro, con lo cual lo anterior es meramente un artifical
+divertimento. <br> La solución es estimar la bondad de un set de
+hiperparámetros en alguna combinación de: \* Una sola partición de
+\<training, testing\> \* Multiples particiones de \<training, testing\>
+\* El método de k-fold Cross Validation , generalmente con n\>=5 \*
+Utilizar n-repated k-fold Cross Validation \* Leave One Out si la
+cardinalidad del dataset y el poder de cómputo se lo permiten
+
+Luego de comenzar a trabajar con el método de "Multiples particiones de
+\<training, testing\> se le invitó a extender un esqueleto de código del
+método de **Optimización de Hiperparámetros por Grid Search**
 
 ## 3.02 Conceptos
 
-En esta entrega veremos los siguiente conceptos:
-* El origen del overfitting en un arbol de decisión
-* *La maldición del ganador*, overfitting en los hiperparámetros ganadores, Selective Inference
-* Data Drifting
-* Alterntivas de búsqueda
-  * Grid Search, la fuerza bruta
-  * Bayesian Optimization, la heurística
+En esta entrega veremos los siguiente conceptos: \* El origen del
+overfitting en un arbol de decisión \* *La maldición del ganador*,
+overfitting en los hiperparámetros ganadores, Selective Inference \*
+Data Drifting \* Alterntivas de búsqueda \* Grid Search, la fuerza bruta
+\* Bayesian Optimization, la heurística
 
-## 3.03  Corrida notebook inicial
+## 3.03 Corrida notebook inicial
 
-En el repositorio oficial de la asignatura se encuentra el notebook ./src/rpart/z102_FinalTrain.ipynb  que automaticamente hace el submit a la Competencia Analista Sr  de Kaggle.
-<br>  Ingrese a un nuevo Google Colab  y pruebe algunas corridas del notebook cambiando los hiperparámetros de rpart
+En el repositorio oficial de la asignatura se encuentra el notebook
+./src/rpart/z102_FinalTrain.ipynb que automaticamente hace el submit a
+la Competencia Analista Sr de Kaggle. <br> Ingrese a un nuevo Google
+Colab y pruebe algunas corridas del notebook cambiando los
+hiperparámetros de rpart
 
 ## 3.04 Origen del Overfitting en un arbol de decisión
-¿Qué combinacion de hiperparámetros overfitea un árbol de decisión, para nuestro dataset?
-<br>¿Cómo se ve el overfitting desde el punto de vista de las curvas de ganancia?
 
-El objetivo de este capítulo es que usted juegue manualmente con los hiperparámetros de un rpart, observe las curvas de ganancia generadas en una particion <training=50%, testing=50%>  y obtengla conclusiones sobre el fenómeno observado.
+¿Qué combinacion de hiperparámetros overfitea un árbol de decisión, para
+nuestro dataset? <br>¿Cómo se ve el overfitting desde el punto de vista
+de las curvas de ganancia?
 
-Introducimos el concepto de **Curva de Ganancia**
-<br> Al aplicar un modelo a un dataset se le asigna a cada registro una probabilidad, a su vez cada registro contribuye con una ganancia la que puede ser una pérdida o una ganancia.  
-<br>Ordenamos el dataset por probabilidad *descendente* y computamos la ganancia acumulada, generando de esta forma la curva de ganancia
-<br> Para visualizar el efecto del under/over  fitting adecuadamente, realizamos una particion  <training= 50%, testing= 50%>
+El objetivo de este capítulo es que usted juegue manualmente con los
+hiperparámetros de un rpart, observe las curvas de ganancia generadas en
+una particion \<training=50%, testing=50%\> y obtengla conclusiones
+sobre el fenómeno observado.
 
+Introducimos el concepto de **Curva de Ganancia** <br> Al aplicar un
+modelo a un dataset se le asigna a cada registro una probabilidad, a su
+vez cada registro contribuye con una ganancia la que puede ser una
+pérdida o una ganancia.\
+<br>Ordenamos el dataset por probabilidad *descendente* y computamos la
+ganancia acumulada, generando de esta forma la curva de ganancia <br>
+Para visualizar el efecto del under/over fitting adecuadamente,
+realizamos una particion \<training= 50%, testing= 50%\>
 
-tener presente:
-<br> Overfitting  **NO**  es la diferencia entre las curvas
-<br> Lo que divide el underfitting del overfitting al aumentar la complejidad del modelo es la complejidad donde se alcanza la métrica máxima.
+tener presente: <br> Overfitting **NO** es la diferencia entre las
+curvas <br> Lo que divide el underfitting del overfitting al aumentar la
+complejidad del modelo es la complejidad donde se alcanza la métrica
+máxima.
 
 ### ¿Qué debe hacer usted?
-Probar al menos estas combinaciones:
-* **Arbol crecimiento descontrolado**
-   * cp= -1
-   * maxdepth= 30
-   * minsplit= 2
-   * minbucket= 1
-* Arbol talla reducida
-   * cp= -1
-   * maxdepth= 3
-   * minsplit= 20000
-   * minbucket= 10000
+
+Probar al menos estas combinaciones: \* **Arbol crecimiento
+descontrolado** \* cp= -1 \* maxdepth= 30 \* minsplit= 2 \* minbucket= 1
+\* Arbol talla reducida \* cp= -1 \* maxdepth= 3 \* minsplit= 20000 \*
+minbucket= 10000
 
 #### Seteo del ambiente en Google Colab
 
-Esta parte se debe correr con el runtime en Python3
-<br>Ir al menu, Runtime -> Change Runtime Type -> Runtime type ->  **Python 3**
+Esta parte se debe correr con el runtime en Python3 <br>Ir al menu,
+Runtime -\> Change Runtime Type -\> Runtime type -\> **Python 3**
 
-Conectar la virtual machine donde esta corriendo Google Colab con el  Google Drive, para poder tener persistencia de archivos
+Conectar la virtual machine donde esta corriendo Google Colab con el
+Google Drive, para poder tener persistencia de archivos
 
-```{r}
-# primero establecer el Runtime de Python 3
-from google.colab import drive
-drive.mount('/content/.drive')
-```
+Para correr la siguiente celda es fundamental en Arranque en Frio haber
+copiado el archivo kaggle.json al Google Drive, en la carpeta indicada
+en el instructivo
 
-Para correr la siguiente celda es fundamental en Arranque en Frio haber copiado el archivo kaggle.json al Google Drive, en la carpeta indicada en el instructivo
+<br>los siguientes comando estan en shell script de Linux \* Crear las
+carpetas en el Google Drive \* "instalar" el archivo kaggle.json desde
+el Google Drive a la virtual machine para que pueda ser utilizado por la
+libreria kaggle de Python \* Bajar el **dataset_pequeno** al Google
+Drive y tambien al disco local de la virtual machine que esta corriendo
+Google Colab
 
-<br>los siguientes comando estan en shell script de Linux
-*   Crear las carpetas en el Google Drive
-*   "instalar" el archivo kaggle.json desde el Google Drive a la virtual machine para que pueda ser utilizado por la libreria  kaggle de Python
-*   Bajar el  **dataset_pequeno**  al  Google Drive  y tambien al disco local de la virtual machine que esta corriendo Google Colab
-
-
-```{shell}
-
-mkdir -p "/content/.drive/My Drive/labo1"
-mkdir -p "/content/buckets"
-ln -s "/content/.drive/My Drive/labo1" /content/buckets/b1
-
-mkdir -p ~/.kaggle
-cp /content/buckets/b1/kaggle/kaggle.json  ~/.kaggle
-chmod 600 ~/.kaggle/kaggle.json
-
-
-mkdir -p /content/buckets/b1/exp
-mkdir -p /content/buckets/b1/datasets
-mkdir -p /content/datasets
-
-
-
-archivo_origen="https://storage.googleapis.com/open-courses/austral2025-af91/dataset_pequeno.csv"
-archivo_destino="/content/datasets/dataset_pequeno.csv"
-archivo_destino_bucket="/content/buckets/b1/datasets/dataset_pequeno.csv"
-
-if ! test -f $archivo_destino_bucket; then
-  wget  $archivo_origen  -O $archivo_destino_bucket
-fi
-
-
-if ! test -f $archivo_destino; then
-  cp  $archivo_destino_bucket  $archivo_destino
-fi
-```
-
-Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu,
+Runtime -\> Change Runtime Type -\> Runtime type -\> R
 
 limpio el ambiente de R
 
@@ -135,19 +121,20 @@ require("ggplot2")
 ```
 
 ```{r}
-# carpeta de trabajo
-setwd("/content/buckets/b1/exp")
-experimento <- "exp304"
-dir.create(experimento, showWarnings=FALSE)
-setwd( paste0("/content/buckets/b1/exp/", experimento ))
+
+setwd(path)
+experimento <- "exp/exp304"
+dir.create(experimento)
+getwd()
+
 ```
 
-### Acción :  Jugar con  minsplit, minbucket y maxdepth
+### Acción : Jugar con minsplit, minbucket y maxdepth
 
 ```{r}
 # cambiar aqui los parametros
 PARAM <- list()
-PARAM$semilla_primigenia <- 102191
+PARAM$semilla_primigenia <- semilla_primigenia
 
 
 PARAM$minsplit <- 300
@@ -280,61 +267,77 @@ cat( "Test  gan max: ", tb_prediccion[fold==2, max(ganancia_acumulada)], "\n" )
 
 ## 3.05 Análisis de la salida de Grid Search
 
-En clase utilizando un enfoque constructivista de educacion cada uno de los grupos del aula analizará las salidas de las corridas de Grid Search de la Tarea para el Hogar.
-<br>Se espera que quienes ya trabajan como Data Analyst se luzcan en el análisis de esos datos
-<br>Finalmente se utilizara un *arma conceptual secreta*, iluminando elegantemente donde están las mayores ganancias.
+En clase utilizando un enfoque constructivista de educacion cada uno de
+los grupos del aula analizará las salidas de las corridas de Grid Search
+de la Tarea para el Hogar. <br>Se espera que quienes ya trabajan como
+Data Analyst se luzcan en el análisis de esos datos <br>Finalmente se
+utilizara un *arma conceptual secreta*, iluminando elegantemente donde
+están las mayores ganancias.
 
-<br><br>Si usted no tuvo la oportunidad de hacer sus propias corridas esta generosa cátedra pone a su diposición esta salida https://storage.googleapis.com/open-courses/austral2025-af91/gridsearch.txt
+<br><br>Si usted no tuvo la oportunidad de hacer sus propias corridas
+esta generosa cátedra pone a su diposición esta salida
+<https://storage.googleapis.com/open-courses/austral2025-af91/gridsearch.txt>
 
 ## 3.06 La Maldición del Ganador
 
 ¿Los hiperparámetros ganadores de toda la cohorte, estan overfiteando?
-<br> Trabajaremos con la hoja **C3-GS Overfitting** de la Google Sheet Colaborativa
-<br> Determinar de toda la cohorte quien obtuvo la mayor ganancia y con qué hiperparámetros
-<br> copiarlos  a la hoja **C3-GS Overfitting**
-<br> Quien obtuvo esa ganancia no debe hacer nada
-<br> El resto de la cohorte, modifica su script de Grid Search para calcular la ganancia de dichos hiperparámetros ganadores  utilizando su Semilla Primigenia y registra la ganancia en la linea correspondiente a su nombre en la hoja C3-GS Overfitting
+<br> Trabajaremos con la hoja **C3-GS Overfitting** de la Google Sheet
+Colaborativa <br> Determinar de toda la cohorte quien obtuvo la mayor
+ganancia y con qué hiperparámetros <br> copiarlos a la hoja **C3-GS
+Overfitting** <br> Quien obtuvo esa ganancia no debe hacer nada <br> El
+resto de la cohorte, modifica su script de Grid Search para calcular la
+ganancia de dichos hiperparámetros ganadores utilizando su Semilla
+Primigenia y registra la ganancia en la linea correspondiente a su
+nombre en la hoja C3-GS Overfitting
 
-¿ Como compara la ganancia del ganador versus el resto de las ganancias recién calculadas ?
+¿ Como compara la ganancia del ganador versus el resto de las ganancias
+recién calculadas ?
 
 #### Bibliografia
 
-* Selective Inference - the silent killer of replicability   https://www.youtube.com/watch?v=6ZxIzVjV1DE
-* Ioannidis, J. P. A. Why most published research findings are false. PLoS Med. 2, e124 (2005). https://journals.plos.org/plosmedicine/article/file?id=10.1371/journal.pmed.0020124&type=printable
+-   Selective Inference - the silent killer of replicability
+    <https://www.youtube.com/watch?v=6ZxIzVjV1DE>
+-   Ioannidis, J. P. A. Why most published research findings are false.
+    PLoS Med. 2, e124 (2005).
+    <https://journals.plos.org/plosmedicine/article/file?id=10.1371/journal.pmed.0020124&type=printable>
 
+------------------------------------------------------------------------
 
+## 3.07 Data Drifting sospechas
 
----
+Ordenar la salida del Grid Search en forma descendente por ganancia (en
+testing obviamente) <br> De esta forma la posición 1 corresponde a la
+mayor ganancia, la 2 a la segunda mejor, etc <br> En la Google Sheet
+Colaborativa, hoja **C3- GridSEarch** cargue las posiciones 1, 2, 5, 10,
+50 y 100 de la salida del Grid Search, dejando la columna Public
+Leaderboard sin cargar <br> La columna ganancia_mean tiene valores en
+orden descendente
 
+El objetivo de hacer Grid Search es utilizando particiones \<training,
+testing\> encontrar los mejores hiperparámetros <br> Esto tiene sentido
+en la medida que los hiperparámetros que resultan mejores de la búsqueda
+Grid Search son también los mejores cuando se hace el Final Training
 
-## 3.07 Data Drifting  sospechas
+Utilizando el notebook de la primiera clase, **z102_FinalTrain.ipynb**
+calcule para cada uno de los sets de hiperparámetros de las posiciones
+1, 2, 5, 10, 50 y 100 cual es la ganancia en el Public Leaderboard de
+Kaggle <br> Deberá hacer una corrida para cada conjunto de
+hiperparámetros
 
-Ordenar la salida del Grid Search en forma descendente por ganancia (en testing obviamente)
-<br> De esta forma la posición 1 corresponde a la mayor ganancia, la 2 a la segunda mejor, etc
-<br> En la Google Sheet Colaborativa,  hoja  **C3- GridSEarch** cargue las posiciones  1, 2, 5, 10, 50 y 100 de la salida del Grid Search, dejando la columna Public Leaderboard sin cargar
-<br> La columna ganancia_mean tiene valores en orden descendente
-
-El objetivo de hacer Grid Search  es utilizando particiones <training, testing>  encontrar los mejores hiperparámetros
-<br> Esto tiene sentido en la medida que los hiperparámetros que resultan mejores de la búsqueda Grid Search son también los mejores cuando se hace el Final Training
-
-Utilizando el notebook de la primiera clase,  **z102_FinalTrain.ipynb**   calcule para cada uno de los sets de hiperparámetros de las posiciones 1, 2, 5, 10, 50 y 100  cual es la ganancia en el Public Leaderboard de Kaggle
-<br> Deberá hacer una corrida para cada conjunto de hiperparámetros
-
- ¿ Se cumple que los hiperparámetros de la posición  1 del Grid Search son los que mejor funcionan para predecir los datos del futuro ?
+¿ Se cumple que los hiperparámetros de la posición 1 del Grid Search son
+los que mejor funcionan para predecir los datos del futuro ?
 
 ¿ Si esto no fuera así, estamos en una sitacion de **Game Over** ?
 
-
-
----
-
+------------------------------------------------------------------------
 
 ## 3.08 Data Drifting, breve intuicion
 
-Se mostrará un posible origen de las discrepancias observadas en el capítulo anterior
-<br> La solución al Data Drifting es otro precio ...
+Se mostrará un posible origen de las discrepancias observadas en el
+capítulo anterior <br> La solución al Data Drifting es otro precio ...
 
-Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu,
+Runtime -\> Change Runtime Type -\> Runtime type -\> R
 
 limpio el ambiente de R
 
@@ -344,8 +347,8 @@ rm(list=ls(all.names=TRUE)) # remove all objects
 gc(full=TRUE, verbose=FALSE) # garbage collection
 ```
 
-* Instalacion de la libreria  rpart.plot  para dibujar el arbol
-* invocacion de las librerias  **data.table** y  **rpart**
+-   Instalacion de la libreria rpart.plot para dibujar el arbol
+-   invocacion de las librerias **data.table** y **rpart**
 
 ```{r}
 # cargo las librerias que necesito
@@ -354,11 +357,13 @@ require("rpart")
 ```
 
 ```{r}
-# carpeta de trabajo
-setwd("/content/buckets/b1/exp")
-experimento <- "exp308"
-dir.create(experimento, showWarnings=FALSE)
-setwd( paste0("/content/buckets/b1/exp/", experimento ))
+
+setwd(path)
+
+experimento <- "exp/exp308"
+dir.create(experimento)
+getwd()
+
 ```
 
 ```{r}
@@ -407,7 +412,7 @@ graficar_campo <- function(campo, param) {
 
 ```{r}
 # lectura del dataset
-dataset <- fread("/content/datasets/dataset_pequeno.csv")
+dataset <- fread(dataset_pequeno)
 ```
 
 ```{r}
@@ -453,23 +458,19 @@ for (campo in campos_buenos) {
 }
 ```
 
-
-
----
-
+------------------------------------------------------------------------
 
 ## 3.09 Bayesian Optimization
 
-Se explicará en clase como a partir del Grid Search se deriva el algoritmo de Bayesian Optimization
+Se explicará en clase como a partir del Grid Search se deriva el
+algoritmo de Bayesian Optimization
 
-
-
----
-
+------------------------------------------------------------------------
 
 ## 3.10 Bayesian Optimization código
 
-Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu,
+Runtime -\> Change Runtime Type -\> Runtime type -\> R
 
 limpio el ambiente de R
 
@@ -479,8 +480,8 @@ rm(list=ls(all.names=TRUE)) # remove all objects
 gc(full=TRUE, verbose=FALSE) # garbage collection
 ```
 
-* Instalacion de la libreria  rpart.plot  para dibujar el arbol
-* invocacion de las librerias  **data.table** y  **rpart**
+-   Instalacion de la libreria rpart.plot para dibujar el arbol
+-   invocacion de las librerias **data.table** y **rpart**
 
 ```{r}
 # cargo las librerias que necesito
@@ -514,7 +515,7 @@ Accion a realizar : cambiar por su semilla primigenia
 # cantidad de iteraciones de la Optimizacion Bayesiana
 PARAM <- list()
 
-PARAM$semilla_primigenia <- 102191
+PARAM$semilla_primigenia <- semilla_primigenia
 PARAM$experimento <- "HT310"
 
 PARAM$BO_iter <- 40 #cantidad de iteraciones de la Bayesian Optimization
@@ -532,10 +533,12 @@ PARAM$hs <- makeParamSet(
 ```
 
 ```{r}
-# carpeta de trabajo
-setwd("/content/buckets/b1/exp")
-dir.create(PARAM$experimento, showWarnings=FALSE)
-setwd( paste0("/content/buckets/b1/exp/", PARAM$experimento ))
+setwd(path)
+
+experimento <- paste0("exp/",PARAM$experimento)
+dir.create(experimento)
+getwd()
+
 ```
 
 ```{r}
@@ -606,7 +609,7 @@ ArbolesCrossValidation <- function(param_rpart, qfolds, pagrupa, semilla) {
     seq(qfolds), # 1 2 3 4 5
     MoreArgs= list(param_rpart),
     SIMPLIFY= FALSE,
-    mc.cores= detectCores()
+    mc.cores= 1
   )
 
   dataset[, fold := NULL]
@@ -645,10 +648,11 @@ EstimarGanancia <- function(x) {
 
 ```{r}
 # lectura del dataset
-dataset <- fread("/content/datasets/dataset_pequeno.csv")
+dataset <- fread(dataset_pequeno)
 ```
 
 ```{r}
+setwd(paste0(path,"/",experimento))
 
 archivo_log <- "BO_log.txt"
 archivo_BO <- "bayesian.RDATA"
@@ -701,6 +705,7 @@ surr.km <- makeLearner("regr.km",
 ```
 
 ```{r}
+setwd(paste0(path,"/",experimento))
 
 # inicio la optimizacion bayesiana
 if (!file.exists(archivo_BO)) {
@@ -716,6 +721,8 @@ if (!file.exists(archivo_BO)) {
 ```
 
 ```{r}
+setwd(paste0(path,"/",experimento))
+
 # almaceno los resultados de la Bayesian Optimization
 # y capturo los mejores hiperparametros encontrados
 
@@ -743,8 +750,4 @@ print(PARAM$out$lgbm$mejores_hiperparametros)
 format(Sys.time(), "%a %b %d %X %Y")
 ```
 
-
-
----
-
-
+------------------------------------------------------------------------
