@@ -122,6 +122,11 @@ require("ggplot2")
 
 ```{r}
 
+## Working Directory
+path <- "G:/Mi unidad/Maestría en Ciencia de Datos - Universidad Austral/Materias/7. Laboratorio de implementación (martes)/Experimentos"
+path_dataset_pequeno <- paste0(path,"/datasets/dataset_pequeno.csv")
+
+
 setwd(path)
 experimento <- "exp/exp304"
 dir.create(experimento)
@@ -132,6 +137,10 @@ getwd()
 ### Acción : Jugar con minsplit, minbucket y maxdepth
 
 ```{r}
+
+## Mis semillas
+semilla_primigenia <- 310019
+
 # cambiar aqui los parametros
 PARAM <- list()
 PARAM$semilla_primigenia <- semilla_primigenia
@@ -159,9 +168,9 @@ particionar <- function(data, division, agrupa= "", campo= "fold", start= 1, see
 ```
 
 ```{r}
-# lectura del dataset
+path_dataset_pequeno <- paste0(path,"/datasets/dataset_pequeno.csv")
 
-dataset <- fread("/content/datasets/dataset_pequeno.csv")
+dataset <- fread(path_dataset_pequeno)
 ```
 
 ```{r}
@@ -221,10 +230,13 @@ setorder(tb_prediccion, fold, -prob_baja2)
 tb_prediccion[, gan := 2 *ifelse(clase_ternaria == "BAJA+2", 117000, -3000)]
 tb_prediccion[, ganancia_acumulada := cumsum(gan), by= fold]
 tb_prediccion[, pos := sequence(.N), by= fold]
+
+tb_prediccion
 ```
 
 ```{r}
-tb_prediccion
+print(tb_prediccion)
+
 ```
 
 ```{r}
@@ -357,6 +369,12 @@ require("rpart")
 ```
 
 ```{r}
+semilla_primigenia <- 310019
+
+## Working Directory
+path <- "G:/Mi unidad/Maestría en Ciencia de Datos - Universidad Austral/Materias/7. Laboratorio de implementación (martes)/Experimentos"
+path_dataset_pequeno <- paste0(path,"/datasets/dataset_pequeno.csv")
+
 
 setwd(path)
 
@@ -412,7 +430,7 @@ graficar_campo <- function(campo, param) {
 
 ```{r}
 # lectura del dataset
-dataset <- fread(dataset_pequeno)
+dataset <- fread(path_dataset_pequeno)
 ```
 
 ```{r}
@@ -484,6 +502,12 @@ gc(full=TRUE, verbose=FALSE) # garbage collection
 -   invocacion de las librerias **data.table** y **rpart**
 
 ```{r}
+semilla_primigenia <- 310019
+
+## Working Directory
+path <- "G:/Mi unidad/Maestría en Ciencia de Datos - Universidad Austral/Materias/7. Laboratorio de implementación (martes)/Experimentos"
+path_dataset_pequeno <- paste0(path,"/datasets/dataset_pequeno.csv")
+
 # cargo las librerias que necesito
 require("data.table")
 require("rpart")
@@ -648,7 +672,7 @@ EstimarGanancia <- function(x) {
 
 ```{r}
 # lectura del dataset
-dataset <- fread(dataset_pequeno)
+dataset <- fread(path_dataset_pequeno)
 ```
 
 ```{r}

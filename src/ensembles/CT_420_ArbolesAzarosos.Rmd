@@ -29,12 +29,6 @@ Esta parte se debe correr con el runtime en Python3
 
 Conectar la virtual machine donde esta corriendo Google Colab con el  Google Drive, para poder tener persistencia de archivos
 
-```{r}
-# primero establecer el Runtime de Python 3
-from google.colab import drive
-drive.mount('/content/.drive')
-```
-
 Para correr la siguiente celda es fundamental en Arranque en Frio haber copiado el archivo kaggle.json al Google Drive, en la carpeta indicada en el instructivo
 
 <br>los siguientes comando estan en shell script de Linux
@@ -42,37 +36,6 @@ Para correr la siguiente celda es fundamental en Arranque en Frio haber copiado 
 *   "instalar" el archivo kaggle.json desde el Google Drive a la virtual machine para que pueda ser utilizado por la libreria  kaggle de Python
 *   Bajar el  **dataset_pequeno**  al  Google Drive  y tambien al disco local de la virtual machine que esta corriendo Google Colab
 
-
-```{shell}
-
-mkdir -p "/content/.drive/My Drive/labo1"
-mkdir -p "/content/buckets"
-ln -s "/content/.drive/My Drive/labo1" /content/buckets/b1
-
-mkdir -p ~/.kaggle
-cp /content/buckets/b1/kaggle/kaggle.json  ~/.kaggle
-chmod 600 ~/.kaggle/kaggle.json
-
-
-mkdir -p /content/buckets/b1/exp
-mkdir -p /content/buckets/b1/datasets
-mkdir -p /content/datasets
-
-
-
-archivo_origen="https://storage.googleapis.com/open-courses/austral2025-af91/dataset_pequeno.csv"
-archivo_destino="/content/datasets/dataset_pequeno.csv"
-archivo_destino_bucket="/content/buckets/b1/datasets/dataset_pequeno.csv"
-
-if ! test -f $archivo_destino_bucket; then
-  wget  $archivo_origen  -O $archivo_destino_bucket
-fi
-
-
-if ! test -f $archivo_destino; then
-  cp  $archivo_destino_bucket  $archivo_destino
-fi
-```
 
 
 
@@ -104,6 +67,15 @@ gc(full=TRUE, verbose=FALSE) # garbage collection
 ```
 
 ```{r}
+
+## Mis semillas
+semilla_primigenia <- 310019
+
+## Working Directory
+path <- "G:/Mi unidad/Maestría en Ciencia de Datos - Universidad Austral/Materias/7. Laboratorio de implementación (martes)/Experimentos"
+path_dataset_pequeno <- paste0(path,"/datasets/dataset_pequeno.csv")
+
+
 # cargo las librerias que necesito
 require("data.table")
 require("rpart")
@@ -113,7 +85,7 @@ Aqui debe cargar SU semilla primigenia
 
 ```{r}
 PARAM <- list()
-PARAM$semilla_primigenia <- 102191
+PARAM$semilla_primigenia <- semilla_primigenia
 
 # parametros  arbol
 # entreno cada arbol con solo 50% de las variables variables
@@ -121,27 +93,28 @@ PARAM$semilla_primigenia <- 102191
 PARAM$feature_fraction <- 0.5
 
 PARAM$rpart$cp <- -1
-PARAM$rpart$minsplit <- 50
-PARAM$rpart$minbucket <- 20
-PARAM$rpart$maxdepth <- 6
+PARAM$rpart$minsplit <- 1484
+PARAM$rpart$minbucket <- 271
+PARAM$rpart$maxdepth <- 15
 
 # voy a generar 512 arboles,
 #  a mas arboles mas tiempo de proceso y MEJOR MODELO,
 #  pero ganancias marginales
-PARAM$num_trees_max <- 512
+PARAM$num_trees_max <- 32
 ```
 
 ```{r}
-# carpeta de trabajo
-setwd("/content/buckets/b1/exp")
-experimento <- "exp4020"
-dir.create(experimento, showWarnings=FALSE)
-setwd( paste0("/content/buckets/b1/exp/", experimento ))
+
+setwd(path)
+experimento <- "exp/exp4020"
+dir.create(experimento)
+path_exp <- paste0(path,"/",experimento)
+
 ```
 
 ```{r}
 # lectura del dataset
-dataset <- fread("/content/datasets/dataset_pequeno.csv")
+dataset <- fread(path_dataset_pequeno)
 ```
 
 ```{r}
@@ -175,6 +148,8 @@ set.seed(PARAM$semilla_primigenia) # Establezco la semilla aleatoria
 ```
 
 ```{r}
+setwd(path_exp)
+
 for (arbolito in seq(PARAM$num_trees_max) ) {
   message( arbolito, " ")
   qty_campos_a_utilizar <- as.integer(length(campos_buenos)
@@ -212,7 +187,7 @@ for (arbolito in seq(PARAM$num_trees_max) ) {
         sprintf("%.3d", arbolito), # para que tenga ceros adelante
         ".csv"
       )
-
+    
     # grabo el archivo
     fwrite( tb_prediccion[, list(numero_de_cliente, Predicted)],
       file= archivo_kaggle,
@@ -222,9 +197,24 @@ for (arbolito in seq(PARAM$num_trees_max) ) {
     # subida a Kaggle
     comando <- "kaggle competitions submit"
     competencia <- "-c labo-i-2025-virtual-analista-sr"
+    
+    arch <- paste("-f", shQuote(file.path(path_exp, archivo_kaggle)))
+    mensaje <- paste0("-m ", shQuote(
+      paste0("cp=", PARAM$rpart$cp,
+             " minsplit=", PARAM$rpart$minsplit,
+             " minbucket=", PARAM$rpart$minbucket,
+             " maxdepth=", PARAM$rpart$maxdepth)
+        ))
+
+    
     arch <- paste( "-f", archivo_kaggle)
 
-    mensaje <- paste0("-m 'cp=", PARAM$rpart$cp, "  minsplit=", PARAM$rpart$minsplit, "  minbucket=", PARAM$rpart$minbucket, " maxdepth=", PARAM$rpart$maxdepth, "'" )
+    mensaje <- paste0("-m 'cp=", PARAM$rpart$cp, 
+                      "  minsplit=", PARAM$rpart$minsplit, 
+                      "  minbucket=", PARAM$rpart$minbucket, 
+                      " maxdepth=", PARAM$rpart$maxdepth, "'" )
+    
+    
     linea <- paste( comando, competencia, arch, mensaje)
     salida <- system(linea, intern=TRUE)
     cat(salida)
