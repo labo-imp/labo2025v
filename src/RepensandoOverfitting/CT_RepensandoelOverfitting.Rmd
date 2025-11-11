@@ -1,0 +1,421 @@
+---
+title: An R Markdown document converted from "src/RepensandoOverfitting/RepensandoelOverfitting.ipynb"
+output: html_document
+---
+
+# 5. Repensando el Overfitting
+
+#### 5.1 Seteo del ambiente en Google Colab
+
+Esta parte se debe correr con el runtime en Python3
+<br>Ir al menu, Runtime -> Change Runtime Type -> Runtime type ->  **Python 3**
+
+Conectar la virtual machine donde esta corriendo Google Colab con el  Google Drive, para poder tener persistencia de archivos
+
+```{r}
+# primero establecer el Runtime de Python 3
+from google.colab import drive
+drive.mount('/content/.drive')
+```
+
+Para correr la siguiente celda es fundamental en Arranque en Frio haber copiado el archivo kaggle.json al Google Drive, en la carpeta indicada en el instructivo
+
+<br>los siguientes comando estan en shell script de Linux
+*   Crear las carpetas en el Google Drive
+*   "instalar" el archivo kaggle.json desde el Google Drive a la virtual machine para que pueda ser utilizado por la libreria  kaggle de Python
+*   Bajar el  **dataset_pequeno**  al  Google Drive  y tambien al disco local de la virtual machine que esta corriendo Google Colab
+
+
+```{shell}
+
+mkdir -p "/content/.drive/My Drive/labo1"
+mkdir -p "/content/buckets"
+ln -s "/content/.drive/My Drive/labo1" /content/buckets/b1
+
+mkdir -p ~/.kaggle
+cp /content/buckets/b1/kaggle/kaggle.json  ~/.kaggle
+chmod 600 ~/.kaggle/kaggle.json
+
+
+mkdir -p /content/buckets/b1/exp
+mkdir -p /content/buckets/b1/datasets
+mkdir -p /content/datasets
+
+
+
+archivo_origen="https://storage.googleapis.com/open-courses/austral2025-af91/dataset_pequeno.csv"
+archivo_destino="/content/datasets/dataset_pequeno.csv"
+archivo_destino_bucket="/content/buckets/b1/datasets/dataset_pequeno.csv"
+
+if ! test -f $archivo_destino_bucket; then
+  wget  $archivo_origen  -O $archivo_destino_bucket
+fi
+
+
+if ! test -f $archivo_destino; then
+  cp  $archivo_destino_bucket  $archivo_destino
+fi
+
+```
+
+
+
+---
+
+
+## 5.2 rpart  Canaritos
+
+Se agregarán canaritos al dataset, se entrenará el arbol con los mejores hiperparámetros encontrados, y se analizará si los canaritos aparecen en algun split.
+
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+
+limpio el ambiente de R
+
+```{r}
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+```{r}
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+if(!require("rpart.plot")) install.packages("rpart.plot")
+require("rpart.plot")
+```
+
+### 5.2.1  carga manual de hipoerparámetros
+Aqui debe cargar SU semilla primigenia y
+<br> SUS mejores hiperparámetros que encontró para el ARBOL DE DECISION, ya sea por Grid Search o  Bayesian Optimization
+
+```{r}
+PARAM <- list()
+PARAM$semilla_primigenia <- 102191
+
+PARAM$rpart$cp <- -0.5
+PARAM$rpart$minsplit <- 600
+PARAM$rpart$minbucket <- 150
+PARAM$rpart$maxdepth <- 6
+```
+
+```{r}
+# carpeta de trabajo
+setwd("/content/buckets/b1/exp")
+experimento <- "exp5200"
+dir.create(experimento, showWarnings=FALSE)
+setwd( paste0("/content/buckets/b1/exp/", experimento ))
+```
+
+```{r}
+# lectura del dataset
+dataset <- fread("/content/datasets/dataset_pequeno.csv")
+```
+
+```{r}
+# me quedo solo con los datos de julio
+dataset <- dataset[ foto_mes==202107,]
+```
+
+```{r}
+# uso esta semilla para los canaritos
+set.seed(PARAM$semila_primigenia)
+
+# agrego los siguientes canaritos
+for( i in 1:154 ) dataset[ , paste0("canarito", i ) :=  runif( nrow(dataset)) ]
+```
+
+```{r}
+# Entreno el modelo
+
+modelo <- rpart(formula= "clase_ternaria ~ .",
+  data= dataset,
+  model= TRUE,
+  xval= 0,
+  control= PARAM$rpart
+)
+```
+
+```{r}
+# genero un pdf con el dibujo del arbol
+
+pdf(file = "arbol_canaritos.pdf", width=28, height=4)
+prp(modelo, extra=101, digits=5, branch=1, type=4, varlen=0, faclen=0)
+dev.off()
+```
+
+vaya a su Google Drive
+<br> busque la carpeta **My Drive / dm / exp / exp5200**
+<br> baje el archivo **arbol_canaritos.pdf**  a su laptop
+<br> abra el .pdf con el Acrobat Reader
+<br> y dentro del .pdf busque splits hechos en alguna de las nuevas variables canaritos
+
+
+
+---
+
+
+## 5.3 rpart  Canaritos desconfiados
+
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+
+limpio el ambiente de R
+
+```{r}
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+```{r}
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+if(!require("rpart.plot")) install.packages("rpart.plot")
+require("rpart.plot")
+```
+
+Aqui debe cargar SU semilla primigenia y
+<br> parametros de un@ alumn@ desconfiad@
+
+```{r}
+PARAM <- list()
+PARAM$semilla_primigenia <- 102191
+
+PARAM$rpart$cp <- -0.5
+PARAM$rpart$minsplit <- 2000
+PARAM$rpart$minbucket <- 800
+PARAM$rpart$maxdepth <- 6
+```
+
+```{r}
+# carpeta de trabajo
+setwd("/content/buckets/b1/exp")
+experimento <- "exp5300"
+dir.create(experimento, showWarnings=FALSE)
+setwd( paste0("/content/buckets/b1/exp/", experimento ))
+```
+
+```{r}
+# lectura del dataset
+dataset <- fread("/content/datasets/dataset_pequeno.csv")
+```
+
+```{r}
+# me quedo solo con los datos de julio
+dataset <- dataset[ foto_mes==202107,]
+```
+
+```{r}
+# uso esta semilla para los canaritos
+set.seed(PARAM$semila_primigenia)
+
+# agrego los siguientes canaritos
+for( i in 1:154 ) dataset[ , paste0("canarito", i ) :=  runif( nrow(dataset)) ]
+```
+
+```{r}
+# Entreno el modelo
+
+modelo <- rpart(formula= "clase_ternaria ~ .",
+  data= dataset,
+  model= TRUE,
+  xval= 0,
+  control= PARAM$rpart
+)
+```
+
+```{r}
+# genero un pdf con el dibujo del arbol
+
+pdf(file = "arbol_canaritos_desconfiados.pdf", width=28, height=4)
+prp(modelo, extra=101, digits=5, branch=1, type=4, varlen=0, faclen=0)
+dev.off()
+```
+
+vaya a su Google Drive
+<br> busque la carpeta **My Drive /  dm / exp / exp5300**
+<br> baje el archivo **arbol_canaritos_desconfiados.pdf**  a su laptop
+<br> abra el .pdf con el Acrobat Reader
+<br> y dentro del .pdf busque splits hecho en alguna de las nuevas variables canaritos
+
+
+
+---
+
+
+## 5.4 rpart  Canaritos pruning
+
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+
+limpio el ambiente de R
+
+```{r}
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+```{r}
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+if(!require("rpart.plot")) install.packages("rpart.plot")
+require("rpart.plot")
+```
+
+Aqui debe cargar SU semilla primigenia
+
+```{r}
+PARAM <- list()
+PARAM$semilla_primigenia <- 1021917
+
+# Dejo crecer el arbol sin ninguna limitacion
+# sin limite de altura ( 30 es el maximo que permite rpart )
+# sin limite de minsplit ( 2 es el minimo natural )
+# sin limite de minbukcet( 1 es el minimo natural )
+# ya aprendimos que cp debe ser negativo
+PARAM$rpart$cp <- -1
+PARAM$rpart$minsplit <- 2
+PARAM$rpart$minbucket <- 1
+PARAM$rpart$maxdepth <- 30
+```
+
+```{r}
+# carpeta de trabajo
+setwd("/content/buckets/b1/exp")
+experimento <- "exp5400"
+dir.create(experimento, showWarnings=FALSE)
+setwd( paste0("/content/buckets/b1/exp/", experimento ))
+```
+
+```{r}
+# lectura del dataset
+dataset <- fread("/content/datasets/dataset_pequeno.csv")
+```
+
+```{r}
+# uso esta semilla para los canaritos
+set.seed(PARAM$semila_primigenia)
+
+# agrego los siguientes canaritos
+for( i in 1:155 ) dataset[ , paste0("canarito", i ) :=  runif( nrow(dataset)) ]
+```
+
+```{r}
+# datos de training
+dtrain <- dataset[foto_mes == 202107]
+```
+
+```{r}
+# clase binaria
+dtrain[, clase_binaria2 := ifelse( clase_ternaria=="CONTINUA", "NEG", "POS" ) ]
+dtrain[, clase_ternaria := NULL ]
+```
+
+```{r}
+# Entreno el modelo
+pesos <- dtrain[, ifelse( clase_binaria2=="POS", 5.0, 1.0 ) ]
+
+modelo_original <- rpart(formula= "clase_binaria2 ~ .",
+  data= dtrain,
+  model= TRUE,
+  xval= 0,
+  control= PARAM$rpart,
+  weights= pesos
+)
+```
+
+```{r}
+# hago el pruning de los canaritos
+# haciendo un hackeo a la estructura  modelo_original$frame
+# -666 es un valor arbritrariamente negativo que jamas es generado por rpart
+
+modelo_original$frame[
+    modelo_original$frame$var %like% "canarito",
+    "complexity"
+] <- -666
+
+modelo_pruned <- prune(modelo_original, -666)
+```
+
+```{r}
+# genero un pdf con el dibujo del arbol
+
+pdf(file = "stopping_at_canaritos.pdf", width=28, height=4)
+prp(modelo_pruned, extra=101, digits=5, branch=1, type=4, varlen=0, faclen=0)
+dev.off()
+```
+
+```{r}
+# datos del futuro
+dfuture <- dataset[foto_mes == 202109]
+```
+
+```{r}
+# scoring, aplico el modelo a los datos del futuro
+prediccion <- predict(modelo_pruned,
+  dfuture,
+  type= "prob"
+)
+```
+
+```{r}
+# tabla prediccion
+tb_prediccion <- as.data.table(list(
+  "numero_de_cliente" = dfuture$numero_de_cliente,
+  "prob"=prediccion[, "POS"]
+))
+```
+
+```{r}
+# Decison
+setorder( tb_prediccion, -prob )
+tb_prediccion[ , Predicted := 0L ]
+tb_prediccion[ 1:11000, Predicted := 1L ]
+```
+
+```{r}
+# archivo para kaggle
+archivo_kaggle <- "K5400_001.csv"
+
+fwrite( tb_prediccion[, list(numero_de_cliente, Predicted)],
+  file= archivo_kaggle,
+  sep= ","
+)
+```
+
+```{r}
+# subida a Kaggle
+comando <- "kaggle competitions submit"
+competencia <- "-c labo-i-2025-ba-analista-sr"
+arch <- paste( "-f", archivo_kaggle)
+```
+
+```{r}
+mensaje <- paste0("-m 'cp=", PARAM$rpart$cp, "  minsplit=", PARAM$rpart$minsplit, "  minbucket=", PARAM$rpart$minbucket, " maxdepth=", PARAM$rpart$maxdepth, "'" )
+```
+
+```{r}
+linea <- paste( comando, competencia, arch, mensaje)
+
+# este es el comando que correria desde el prompt de Linux
+linea
+```
+
+```{r}
+# ejecuto el comando
+salida <- system(linea, intern=TRUE)
+cat(salida)
+```
+
+vaya a su Google Drive
+<br> busque la carpeta **My Drive /  dm / exp / exp5400**
+<br> baje el archivo **stopping_at_canaritos.pdf**  a su laptop
+<br> abra el .pdf con el Acrobat Reader
+
+
+
+---
+
+

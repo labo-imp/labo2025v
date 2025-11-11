@@ -1,0 +1,585 @@
+---
+title: An R Markdown document converted from "src/ensembles/z470_GBDT_LightGBM.ipynb"
+output: html_document
+---
+
+# 4. Ensembles de Arboles de Decision
+
+## 4.06 GBDT LightGBM
+
+La técnica de Gradient Boosting fue creada por Jerome H. Friedman en 1999 - 2001
+<br>Se implementaron librerías ineficientes
+<br>En 2016 se crea XGBoost, en 2017 LightGBM
+
+
+
+Paper original de  Gradient Boosting
+
+
+Friedman JH. Greedy function approximation: A gradient
+boosting machine. Ann Stat. 2001;29(5):1189–232. https://
+doi.org/10.1214/aos/1013203451.
+<br>
+https://projecteuclid.org/journals/annals-of-statistics/volume-29/issue-5/Greedy-function-approximation-A-gradient-boosting-machine/10.1214/aos/1013203451.pdf
+
+Paper XGBoost
+
+Chen, T.; Guestrin, C. Xgboost: A scalable tree boosting system. In Proceedings of the 22nd ACM Sigkdd International Conference on Knowledge Discovery and Data Mining, San Francisco, CA, USA, 13–17 August 2016; pp. 785–794.
+
+https://dl.acm.org/doi/pdf/10.1145/2939672.2939785
+
+Paper  LightGBM
+
+Ke G., Meng Q., Finley T., Wang T., Chen W., Ma W., et al.
+Lightgbm: A highly efficient gradient boosting decision tree
+Advances in Neural Information Processing Systems, 30 (2017)
+
+https://proceedings.neurips.cc/paper/2017/file/6449f44a102fde848669bdd9eb6b76fa-Paper.pdf
+
+Videos "simplificados" :
+*  https://www.youtube.com/watch?v=3CC4N4z3GJc
+*  https://www.youtube.com/watch?v=2xudPOBz-vs
+*  https://www.youtube.com/watch?v=jxuNLH5dXCs
+*  https://www.youtube.com/watch?v=StWY5QWMXCw
+
+Artículos ligeros:
+*  https://machinelearningmastery.com/gentle-introduction-gradient-boosting-algorithm-machine-learning/
+*   https://www.machinelearningplus.com/machine-learning/an-introduction-to-gradient-boosting-decision-trees/
+*   https://medium.com/@ruchi.awasthi63/gradient-boosted-decision-tree-clearly-explained-bd1d8c7d9923
+*   https://medium.com/data-science/a-visual-understanding-of-decision-trees-and-gradient-boosting-c6bc53f982ce
+*   https://medium.com/analytics-vidhya/introduction-to-the-gradient-boosting-algorithm-c25c653f826b
+*   https://medium.com/@datasciencewizards/understanding-the-gradient-boosting-algorithm-9fe698a352ad
+
+El Gradient Boosting of Decision Trees es un ensemble de árboles de decisión, para un nuevo registro la predicción se hace sumando el score que cada arbol asigna a ese registro.
+
+En GBDT la construccion de los árboles es secuencial, ya que el arbol n-simo se genera para predecir el error del modelo conformado por los n-1 arboles previos, aunque sea un arbol de clasificación lo que se predice es un numero real mediante un arbol de regresión.
+
+<br>Qué tipo de perturbaciones se realiza LightGBM
+
+*   Se perturba el dataset, seleccionando para cada arbol un subconjunto de las columnas.
+*   El algortimo de arbol de decisión no presenta perturbaciones
+
+Cada arbolito de LightGBM se entrena sobre un dataset perturbado, que en principio posee :
+* todos los registros del dataset original
+* solo un porcentaje *feature_fraction* de las columnas originales del dataset
+
+#### 4.06.1  Seteo del ambiente en Google Colab
+
+Esta parte se debe correr con el runtime en Python3
+<br>Ir al menu, Runtime -> Change Runtime Type -> Runtime type ->  **Python 3**
+
+Conectar la virtual machine donde esta corriendo Google Colab con el  Google Drive, para poder tener persistencia de archivos
+
+```{r}
+# primero establecer el Runtime de Python 3
+from google.colab import drive
+drive.mount('/content/.drive')
+```
+
+Para correr la siguiente celda es fundamental en Arranque en Frio haber copiado el archivo kaggle.json al Google Drive, en la carpeta indicada en el instructivo
+
+<br>los siguientes comando estan en shell script de Linux
+*   Crear las carpetas en el Google Drive
+*   "instalar" el archivo kaggle.json desde el Google Drive a la virtual machine para que pueda ser utilizado por la libreria  kaggle de Python
+*   Bajar el  **dataset_pequeno**  al  Google Drive  y tambien al disco local de la virtual machine que esta corriendo Google Colab
+
+
+```{shell}
+
+mkdir -p "/content/.drive/My Drive/labo1"
+mkdir -p "/content/buckets"
+ln -s "/content/.drive/My Drive/labo1" /content/buckets/b1
+
+mkdir -p ~/.kaggle
+cp /content/buckets/b1/kaggle/kaggle.json  ~/.kaggle
+chmod 600 ~/.kaggle/kaggle.json
+
+
+mkdir -p /content/buckets/b1/exp
+mkdir -p /content/buckets/b1/datasets
+mkdir -p /content/datasets
+
+
+
+archivo_origen="https://storage.googleapis.com/open-courses/austral2025-af91/dataset_pequeno.csv"
+archivo_destino="/content/datasets/dataset_pequeno.csv"
+archivo_destino_bucket="/content/buckets/b1/datasets/dataset_pequeno.csv"
+
+if ! test -f $archivo_destino_bucket; then
+  wget  $archivo_origen  -O $archivo_destino_bucket
+fi
+
+
+if ! test -f $archivo_destino; then
+  cp  $archivo_destino_bucket  $archivo_destino
+fi
+```
+
+### 4.07  LightGBM, una corrida
+
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+
+limpio el ambiente de R
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+```{r}
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+```{r}
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+
+if( !require("rlist") ) install.packages("rlist")
+require("rlist")
+
+if( !require("lightgbm") ) install.packages("lightgbm")
+require("lightgbm")
+```
+
+Aqui debe cargar SU semilla primigenia
+
+```{r}
+PARAM <- list()
+PARAM$experimento <- 4070
+PARAM$semilla_primigenia <- 102191
+
+# estos hiperparametros de LightGBM surgieron de una Bayesian Optimization
+PARAM$lgb$num_iterations <- 1000  # cantidad de arbolitos
+PARAM$lgb$learning_rate <- 0.027
+PARAM$lgb$feature_fraction <- 0.8
+PARAM$lgb$min_data_in_leaf <- 76
+PARAM$lgb$num_leaves <- 8
+PARAM$lgb$max_bin <- 31
+```
+
+```{r}
+# carpeta de trabajo
+setwd("/content/buckets/b1/exp")
+experimento_folder <- paste0("KA", PARAM$experimento)
+dir.create(experimento_folder, showWarnings=FALSE)
+setwd( paste0("/content/buckets/b1/exp/", experimento_folder ))
+```
+
+```{r}
+# lectura del dataset
+dataset <- fread("/content/datasets/dataset_pequeno.csv", stringsAsFactors= TRUE)
+```
+
+```{r}
+# paso la clase a binaria
+
+dataset[, clase01 := ifelse(clase_ternaria %in% c("BAJA+2"), 1L, 0L)]
+```
+
+```{r}
+# los campos que se van a utilizar
+
+campos_buenos <- setdiff(colnames(dataset), c("clase_ternaria", "clase01"))
+```
+
+```{r}
+# establezco donde entreno
+
+dataset[, train := 0L]
+dataset[foto_mes %in% c(202107), train := 1L]
+```
+
+```{r}
+# dejo los datos en el formato que necesita LightGBM
+
+dtrain <- lgb.Dataset(
+  data= data.matrix(dataset[train == 1L, campos_buenos, with= FALSE]),
+  label= dataset[train == 1L, clase01]
+)
+```
+
+```{r}
+# genero el modelo
+# estos hiperparametros  salieron de una laaarga Optmizacion Bayesiana
+
+set.seed(PARAM$semilla_primigenia, kind = "L'Ecuyer-CMRG") # Establezco la semilla aleatoria
+
+modelo <- lgb.train(
+  data= dtrain,
+  param= list(
+    objective= "binary",
+    max_bin= PARAM$lgb$max_bin,
+    learning_rate= PARAM$lgb$learning_rate,
+    num_iterations= PARAM$lgb$num_iterations,
+    num_leaves= PARAM$lgb$num_leaves,
+    min_data_in_leaf= PARAM$lgb$min_data_in_leaf,
+    feature_fraction= PARAM$lgb$feature_fraction,
+    seed= PARAM$semilla_primigenia
+  )
+)
+```
+
+```{r}
+# ahora imprimo la importancia de variables
+tb_importancia <- as.data.table(lgb.importance(modelo))
+archivo_importancia <- "impo.txt"
+
+fwrite(tb_importancia,
+  file= archivo_importancia,
+  sep= "\t"
+)
+```
+
+```{r}
+# grabo a disco el modelo en un formato para seres humanos ... ponele ...
+
+lgb.save(modelo, "modelo.txt" )
+```
+
+```{r}
+# aplico el modelo a los datos sin clase
+dfuture <- dataset[foto_mes == 202109]
+
+# aplico el modelo a los datos nuevos
+prediccion <- predict(
+  modelo,
+  data.matrix(dfuture[, campos_buenos, with= FALSE])
+)
+```
+
+```{r}
+# tabla de prediccion
+
+tb_prediccion <- dfuture[, list(numero_de_cliente)]
+tb_prediccion[, prob := prediccion ]
+
+# grabo las probabilidad del modelo
+fwrite(tb_prediccion,
+  file= "prediccion.txt",
+  sep= "\t"
+)
+```
+
+```{r}
+# subidas a Kaggle
+# ordeno por probabilidad descendente
+
+setorder(tb_prediccion, -prob)
+```
+
+```{r}
+# genero la prediccion y subo a Kaggle
+
+tb_prediccion[, Predicted := 0L]
+tb_prediccion[prob>(1/40), Predicted := 1L]
+
+archivo_kaggle <- paste0("KA", PARAM$experimento, ".csv")
+
+# grabo el archivo
+fwrite(tb_prediccion[, list(numero_de_cliente, Predicted)],
+  file= archivo_kaggle,
+  sep= ","
+)
+
+# subida a Kaggle
+comando <- "kaggle competitions submit"
+competencia <- "-c labo-i-2025-virtual-analista-sr"
+arch <- paste( "-f", archivo_kaggle)
+
+mensaje <- paste0("-m 'num_iterations=", PARAM$lgb$num_iterations,
+  "  learning_rate=", PARAM$lgb$learning_rate,
+  "  feature_fraction=", PARAM$lgb$feature_fraction,
+  "  min_data_in_leaf=", PARAM$lgb$min_data_in_leaf,
+  "  num_leaves=",PARAM$lgb$num_leaves,
+  "  max_bin=", PARAM$lgb$max_bin,
+"'" )
+
+linea <- paste( comando, competencia, arch, mensaje)
+salida <- system(linea, intern=TRUE)
+cat(salida)
+```
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+
+
+---
+
+
+### 4.08  LightGBM  optimizacion de hiperparámetros
+
+La optimizacion de los hiperparámetros de LightGBM mediante el método de optimizacion bayesiana será su *caballito de batalla* durante la asignatura !
+
+limpio el ambiente de R
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+```{r}
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+```{r}
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+require("parallel")
+
+if( !require("primes") ) install.packages("primes")
+require("primes")
+
+if( !require("rlist") ) install.packages("rlist")
+require("rlist")
+
+if( !require("lightgbm") ) install.packages("lightgbm")
+require("lightgbm")
+
+if( !require("DiceKriging") ) install.packages("DiceKriging")
+require("DiceKriging")
+
+if( !require("mlrMBO") ) install.packages("mlrMBO")
+require("mlrMBO")
+```
+
+Aqui debe cargar SU semilla primigenia
+
+```{r}
+PARAM <- list()
+PARAM$experimento <- 4080
+PARAM$semilla_primigenia <- 102191
+
+# un undersampling de 0.1  toma solo el 10% de los CONTINUA
+# undersampling de 1.0  implica tomar TODOS los datos
+PARAM$trainingstrategy$undersampling <- 1.0
+
+PARAM$hyperparametertuning$iteraciones <- 30 # iteracines bayesianas
+
+PARAM$hyperparametertuning$xval_folds <- 5
+
+# parametros fijos del LightGBM
+PARAM$lgbm$param_fijos <- list(
+  objective= "binary",
+  metric= "auc",
+  first_metric_only= TRUE,
+  boost_from_average= TRUE,
+  feature_pre_filter= FALSE,
+  verbosity= -100,
+  force_row_wise= TRUE, # para evitar warning
+  seed= PARAM$semilla_primigenia,
+  max_bin= 31,
+  num_iterations= 2048,  # valor grande, lo limita early_stopping_rounds
+  early_stopping_rounds= 200
+)
+
+# Aqui se cargan los bordes de los hiperparametros
+PARAM$hypeparametertuning$hs <- makeParamSet(
+  makeNumericParam("learning_rate", lower= 0.01, upper= 0.3),
+  makeNumericParam("feature_fraction", lower= 0.1, upper= 1.0),
+  makeIntegerParam("num_leaves", lower= 8L, upper= 2048L),
+  makeIntegerParam("min_data_in_leaf", lower= 1L, upper= 8000L)
+)
+```
+
+```{r}
+# En el argumento x llegan los parmaetros de la bayesiana
+#  devuelve la AUC de cross validation del modelo entrenado
+
+EstimarGanancia_AUC_lightgbm <- function(x) {
+
+  message(format(Sys.time(), "%a %b %d %X %Y"))
+
+  # uno la lista de hiperparametros : fijos + variables
+  param_completo <- c(PARAM$lgbm$param_fijos, x)
+
+  # entreno LightGBM
+  modelocv <- lgb.cv(
+    data= dtrain,
+    nfold= PARAM$hyperparametertuning$xval_folds,
+    stratified= TRUE,
+    param= param_completo,
+    verbose= -100
+  )
+
+  # obtengo la ganancia
+  AUC <- modelocv$best_score
+
+  # esta es la forma de devolver un parametro extra
+  attr(AUC, "extras") <- list("num_iterations"= modelocv$best_iter)
+
+  # hago espacio en la memoria
+  rm(modelocv)
+  gc(full= TRUE, verbose= FALSE)
+
+  message( "AUC: ", AUC)
+  return(AUC)
+}
+```
+
+aqui se inicia el programa
+
+```{r}
+# carpeta de trabajo
+
+setwd("/content/buckets/b1/exp")
+experimento_folder <- paste0("HT", PARAM$experimento)
+dir.create(experimento_folder, showWarnings=FALSE)
+setwd( paste0("/content/buckets/b1/exp/", experimento_folder ))
+```
+
+```{r}
+# en este archivo quedan la evolucion binaria de la BO
+
+kbayesiana <- "bayesiana.RDATA"
+```
+
+```{r}
+# lectura del dataset
+
+dataset <- fread("/content/datasets/dataset_pequeno.csv")
+```
+
+```{r}
+dataset <- dataset[foto_mes %in% c(202107)]
+```
+
+```{r}
+# paso la clase a binaria que tome valores {0,1}  enteros
+
+dataset[
+  foto_mes %in% c(202107),
+  clase01 := ifelse(clase_ternaria == "BAJA+2", 1L, 0L)
+]
+```
+
+```{r}
+# los campos que se van a utilizar
+
+campos_buenos <- setdiff(
+  colnames(dataset),
+  c("clase_ternaria", "clase01", "azar", "training")
+)
+```
+
+```{r}
+# defino los datos que forma parte del training
+# aqui se hace el undersampling de los CONTINUA
+# notar que para esto utilizo la SEGUNDA semilla
+
+set.seed(PARAM$semilla_primigenia, kind= "L'Ecuyer-CMRG")
+dataset[, azar := runif(nrow(dataset))]
+dataset[, training := 0L]
+
+dataset[
+  foto_mes %in% c(202107) &
+    (azar <= PARAM$trainingstrategy$undersampling | clase_ternaria %in% c("BAJA+1", "BAJA+2")),
+  training := 1L
+]
+```
+
+```{r}
+# dejo los datos en el formato que necesita LightGBM
+
+dtrain <- lgb.Dataset(
+  data= data.matrix(dataset[training == 1L, campos_buenos, with= FALSE]),
+  label= dataset[training == 1L, clase01],
+  free_raw_data= FALSE
+)
+
+nrow(dtrain)
+ncol(dtrain)
+```
+
+```{r}
+# Aqui comienza la configuracion de la Bayesian Optimization
+
+funcion_optimizar <- EstimarGanancia_AUC_lightgbm # la funcion que voy a maximizar
+
+configureMlr(show.learner.output= FALSE)
+
+# configuro la busqueda bayesiana,  los hiperparametros que se van a optimizar
+# por favor, no desesperarse por lo complejo
+
+obj.fun <- makeSingleObjectiveFunction(
+  fn= funcion_optimizar, # la funcion que voy a maximizar
+  minimize= FALSE, # estoy Maximizando la ganancia
+  noisy= TRUE,
+  par.set= PARAM$hypeparametertuning$hs, # definido al comienzo del programa
+  has.simple.signature= FALSE # paso los parametros en una lista
+)
+
+# cada 600 segundos guardo el resultado intermedio
+ctrl <- makeMBOControl(
+  save.on.disk.at.time= 600, # se graba cada 600 segundos
+  save.file.path= kbayesiana
+) # se graba cada 600 segundos
+
+# indico la cantidad de iteraciones que va a tener la Bayesian Optimization
+ctrl <- setMBOControlTermination(
+  ctrl,
+  iters= PARAM$hyperparametertuning$iteraciones
+) # cantidad de iteraciones
+
+# defino el método estandar para la creacion de los puntos iniciales,
+# los "No Inteligentes"
+ctrl <- setMBOControlInfill(ctrl, crit= makeMBOInfillCritEI())
+
+# establezco la funcion que busca el maximo
+surr.km <- makeLearner(
+  "regr.km",
+  predict.type= "se",
+  covtype= "matern3_2",
+  control= list(trace= TRUE)
+)
+```
+
+```{r}
+# inicio la optimizacion bayesiana, retomando si ya existe
+
+if (!file.exists(kbayesiana)) {
+  bayesiana_salida <- mbo(obj.fun, learner= surr.km, control= ctrl)
+} else {
+  bayesiana_salida <- mboContinue(kbayesiana) # retomo en caso que ya exista
+}
+```
+
+```{r}
+# almaceno los resultados de la Bayesian Optimization
+# y capturo los mejores hiperparametros encontrados
+
+tb_bayesiana <- as.data.table(bayesiana_salida$opt.path)
+
+tb_bayesiana[, iter:= .I]
+# ordeno en forma descendente por AUC = y
+setorder(tb_bayesiana, -y, -num_iterations)
+
+# grabo para eventualmente poder utilizarlos en OTRA corrida
+fwrite( tb_bayesiana,
+  file= "BO_log.txt",
+  sep= "\t"
+)
+
+# los mejores hiperparámetros son los que quedaron en el registro 1 de la tabla
+PARAM$out$lgbm$mejores_hiperparametros <- tb_bayesiana[
+  1, # el primero es el de mejor AUC
+  list(learning_rate, feature_fraction, num_leaves, min_data_in_leaf, num_iterations)
+]
+
+print(PARAM$out$lgbm$mejores_hiperparametros)
+```
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+
+
+---
+
+

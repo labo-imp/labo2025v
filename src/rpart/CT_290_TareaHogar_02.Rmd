@@ -1,0 +1,375 @@
+---
+title: An R Markdown document converted from "src/rpart/z290_TareaHogar_02.ipynb"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Tarea para el Hogar 02
+
+Esta Tarea para el Hogar 02 se entrega el final de la segunda clase <br>
+se espera de usted que intente avanzar con los desafios propuestos y que
+los traiga terminados para la Clase 03, ya que se analizarán los
+resultados
+
+## 1. Ensembles de Modelos
+
+Vea el siguiente video [BBC - The Code - The Wisdom of the
+Crowd](https://www.youtube.com/watch?v=iOucwX7Z1HU) ( 5 min)
+
+Lea los siguientes artículos
+
+-   [The Wisdom of Crowds (Vox Populi) by Francis
+    Galton](https://www.all-about-psychology.com/the-wisdom-of-crowds.html)
+    (10 min)
+-   [A Gentle Introduction to Ensemble
+    Learning](https://machinelearningmastery.com/what-is-ensemble-learning/)
+    (10 min)
+
+------------------------------------------------------------------------
+
+## 2. Zero2Hero primera parte
+
+Se han lanzado los primeros fascículos coleccionables llamados "from
+Zero to Hero" que muy detalladamente, paso a paso enseñan todo lo
+necesario de R para entender los scripts oficiales de la asignatura.
+Están en el repositorio oficial de la asignatura, carpeta
+**src/zero2hero**
+
+------------------------------------------------------------------------
+
+## 3. Grid Search
+
+Busque en internet el precido significado de los hiperparámetros de la
+librería **rpart** que está implementando el algoritmo **CART**
+Classification and Regression Trees propuesto en el año 1984 por Leo
+Brieman:
+
+-   cp
+-   maxdepth
+-   minsplit
+-   minbucket
+
+Entienda que valores es razonable tome cada hiperparámetro, en
+particular profundice en el hiperparámetro **cp** y la posibilidad que
+tome valores negativos. Es válido consultar a su amigo de *capacidades
+especiales* ChatGPT
+
+En las siguientes celdas a un notebook incompleto, un esqueleto de
+codigo brindado a modo de facilitarle la tarea de codeo y permitir que
+su valiosa cognición se concentre temas conceptuales de Ciencia de Datos
+
+Modifiquelo agregando loops para que recorra TODOS los hiperparámetros
+de rpart \< cp, maxdepth, minsplit, minbucket \>, y luego póngalo a
+correr. Recuerde cambiar por SU semilla Tenga muy presente la
+granularidad que eligirá para cada hiperparámetro.
+
+### Seteo del ambiente en Google Colab
+
+Esta parte se debe correr con el runtime en Python3 <br>Ir al menu,
+Runtime -\> Change Runtime Tipe -\> Runtime type -\> **Python 3**
+
+Conectar la virtual machine donde esta corriendo Google Colab con el
+Google Drive, para poder tener persistencia de archivos
+
+Para correr la siguiente celda es fundamental en Arranque en Frio haber
+copiado el archivo kaggle.json al Google Drive, en la carpeta indicada
+en el instructivo
+
+<br>los siguientes comando estan en shell script de Linux \* Crear las
+carpetas en el Google Drive \* "instalar" el archivo kaggle.json desde
+el Google Drive a la virtual machine para que pueda ser utilizado por la
+libreria kaggle de Python \* Bajar el **dataset_pequeno** al Google
+Drive y tambien al disco local de la virtual machine que esta corriendo
+Google Colab
+
+limpio el ambiente de R
+
+```{r}
+
+
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+```{r}
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+require("parallel")
+if (!require("primes")) install.packages("primes")
+require("primes")
+```
+
+Aqui debe poner SU semiila primigenia
+
+```{r}
+PARAM <- list()
+# reemplazar por su primer semilla
+PARAM$semilla_primigenia <- semilla_primigenia
+PARAM$qsemillas <- 1
+
+PARAM$training_pct <- 70L  # entre  1L y 99L
+
+# elegir SU dataset comentando/ descomentando
+PARAM$dataset_nom <- path_dataset_pequeno
+```
+
+```{r}
+# particionar agrega una columna llamada fold a un dataset
+#  que consiste en una particion estratificada segun agrupa
+# particionar( data=dataset, division=c(70,30), agrupa=clase_ternaria, seed=semilla)
+#   crea una particion 70, 30
+
+particionar <- function(data, division, agrupa = "", campo = "fold", start = 1, seed = NA) {
+  if (!is.na(seed)) set.seed(seed)
+
+  bloque <- unlist(mapply(function(x, y) {
+    rep(y, x)
+  }, division, seq(from = start, length.out = length(division))))
+
+  data[, (campo) := sample(rep(bloque, ceiling(.N / length(bloque))))[1:.N],
+    by = agrupa
+  ]
+}
+```
+
+```{r}
+ArbolEstimarGanancia <- function(semilla, training_pct, param_basicos) {
+  # particiono estratificadamente el dataset
+  particionar(dataset,
+    division = c(training_pct, 100L -training_pct),
+    agrupa = "clase_ternaria",
+    seed = semilla # aqui se usa SU semilla
+  )
+
+  # genero el modelo
+  # predecir clase_ternaria a partir del resto
+  modelo <- rpart("clase_ternaria ~ .",
+    data = dataset[fold == 1], # fold==1  es training,  el 70% de los datos
+    xval = 0,
+    control = param_basicos
+  ) # aqui van los parametros del arbol
+
+  # aplico el modelo a los datos de testing
+  prediccion <- predict(modelo, # el modelo que genere recien
+    dataset[fold == 2], # fold==2  es testing, el 30% de los datos
+    type = "prob"
+  ) # type= "prob"  es que devuelva la probabilidad
+
+  # prediccion es una matriz con TRES columnas,
+  #  llamadas "BAJA+1", "BAJA+2"  y "CONTINUA"
+  # cada columna es el vector de probabilidades
+
+
+  # calculo la ganancia en testing que es fold==2
+  ganancia_test <- dataset[
+    fold == 2,
+    sum(ifelse(prediccion[, "BAJA+2"] > 0.025,
+      ifelse(clase_ternaria == "BAJA+2", 117000, -3000),
+      0
+    ))
+  ]
+
+  # escalo la ganancia como si fuera todo el dataset
+  ganancia_test_normalizada <- ganancia_test / (( 100 - PARAM$training_pct ) / 100 )
+
+  return(
+    c( list("semilla" = semilla),
+      param_basicos,
+      list( "ganancia_test" = ganancia_test_normalizada )
+     )
+  )
+}
+```
+
+```{r}
+ArbolesMontecarlo <- function(semillas, param_basicos) {
+
+  # la funcion mcmapply  llama a la funcion ArbolEstimarGanancia
+  #  tantas veces como valores tenga el vector  PARAM$semillas
+  salida <- mcmapply(ArbolEstimarGanancia,
+    semillas, # paso el vector de semillas
+    MoreArgs = list(PARAM$training_pct, param_basicos), # aqui paso el segundo parametro
+    SIMPLIFY = FALSE,
+    mc.cores = 1
+  )
+
+  return(salida)
+}
+```
+
+```{r}
+# carpeta de trabajo
+# por fabor cambiar numero de experimento si se cambia el loop principal
+
+setwd(path)
+
+experimento <- "exp/HT2900"
+dir.create(experimento)
+getwd()
+```
+
+```{r}
+# lectura del dataset
+dataset <- fread(path_dataset_pequeno)
+
+# trabajo solo con los datos con clase, es decir 202107
+dataset <- dataset[clase_ternaria != ""]
+```
+
+```{r}
+
+# genero numeros primos
+primos <- generate_primes(min = 100000, max = 1000000)
+set.seed(PARAM$semilla_primigenia) # inicializo
+# me quedo con PARAM$qsemillas   semillas
+PARAM$semillas <- sample(primos, PARAM$qsemillas )
+```
+
+```{r}
+# genero la data.table donde van los resultados detallados del Grid Search
+# un registro para cada combinacion de < semilla, parametros >
+setwd(paste0(path,"/",experimento))
+
+if(file.exists("gridsearch_detalle.txt")){
+  tb_grid_search_detalle <- fread("gridsearch_detalle.txt")
+}else{
+  tb_grid_search_detalle <- data.table(
+    semilla = integer(),
+    cp = numeric(),
+    maxdepth = integer(),
+    minsplit = integer(),
+    minbucket = integer(),
+    ganancia_test = numeric()
+  )
+}
+
+nrow( tb_grid_search_detalle )
+```
+
+Esta es la parte del código que usted debe expandir a TODOS los
+hiperparámetros de rpart, <br>ya que actualmente apenas recorre maxdepth
+y minsplit dejando fijos cp=-0.5 y minbucket=5
+
+```{r}
+setwd(paste0(path,"/",experimento))
+
+# itero por los loops anidados para cada hiperparametro
+iter <- 0
+
+for(vcp in c(-0.5, -1, 0, 0.5)){
+for(vmin_bucket in c(500, 400, 300, 200, 50, 25, 10, 5)){
+for (vmax_depth in c(4, 6, 8, 10, 12, 14)) {
+  for (vmin_split in c(1000, 800, 600, 400, 200, 100, 50, 20, 10)) {
+    # notar como se agrega
+
+    iter <- iter + 1
+    cat( iter, " " )
+    flush.console()
+    if( iter*PARAM$qsemillas < nrow(tb_grid_search_detalle)+1 ) next
+
+    # vminsplit  minima cantidad de registros en un nodo para hacer el split
+    param_basicos <- list(
+      "cp" = vcp, # complejidad minima
+      "maxdepth" = vmax_depth, # profundidad máxima del arbol
+      "minsplit" = vmin_split, # tamaño minimo de nodo para hacer split
+      "minbucket" = vmin_bucket # minima cantidad de registros en una hoja
+    )
+
+    # Un solo llamado, con la semilla 17
+    ganancias <- ArbolesMontecarlo(PARAM$semillas, param_basicos)
+
+    # agrego a la tabla
+    tb_grid_search_detalle <- rbindlist(
+      list( tb_grid_search_detalle,
+            rbindlist(ganancias) )
+    )
+
+  }}
+}
+  # grabo cada vez TODA la tabla en el loop mas externo
+  fwrite( tb_grid_search_detalle,
+          file = "gridsearch_detalle.txt",
+          sep = "\t" )
+}
+```
+
+```{r}
+setwd(paste0(path,"/",experimento))
+
+fwrite( tb_grid_search_detalle,
+   file = "gridsearch_detalle.txt",
+   sep = "\t"
+)
+```
+
+```{r}
+# cantidad de registros de la tabla
+nrow(tb_grid_search_detalle)
+```
+
+```{r}
+# muestro la tabla
+tb_grid_search_detalle
+```
+
+```{r}
+# genero y grabo el resumen
+tb_grid_search <- tb_grid_search_detalle[,
+  list( "ganancia_mean" = mean(ganancia_test),
+    "qty" = .N ),
+  list( cp, maxdepth, minsplit, minbucket )
+]
+```
+
+```{r}
+# ordeno descendente por ganancia
+setorder( tb_grid_search, -ganancia_mean )
+```
+
+```{r}
+# veo los 10 mejores hiperparámetros
+tb_grid_search[1:10]
+```
+
+```{r}
+setwd(paste0(path,"/",experimento))
+
+# genero un id a la tabla
+tb_grid_search[, id := .I ]
+
+fwrite( tb_grid_search,
+  file = "gridsearch.txt",
+  sep = "\t"
+)
+```
+
+# 4. Análisis de resultados de Grid Search
+
+La salida de la corrida anterior queda en \~/buckets/b1/exp/HT2900 que
+corresponde a su Google Drive <br>HT significa Hyperparameter Tuning
+<br>El Grid Search es un método de fuerza bruta de un altísimo costo
+computacional. <br>Queremos ver si es posible crear un algoritmo de
+optimización de hiperparámetros que se ahorre recorrer ciertas porciones
+muy malas del espacio de búsqueda. Algo del estilo “cada vez que pruebo
+una combinación de hiperparámetros donde cp \> 1 , la ganancia es muy
+mala, con lo cual ni vale la pena perder el tiempo explorando en esa
+region”
+
+<br>Levante el archivo de salida gridsearch.txt a una planilla tipo
+Excel y analícelo detenidamente <br>Ordene por ganancia_mean descendente
+<br> <br>El de mayor ganancia_mean decimos que es el primero del ranking
+En Zulip, correspondiente channel #Tarea Hogar 02 , topic Analisis Grid
+Search intente contestar estas preguntas:
+
+-   ¿Qué combinaciones de hiperparámetros poseen una ganancia muy buena?
+-   ¿Hay algun hiperparámetro que para cierto valor siempre genera una
+    ganancia muy mala, a independientemente de lo que valgan los otros
+    hiperparámetros ?
+-   ¿Que combinaciones de hiperparámetros es pésima y hubiera sido bueno
+    ahorrarse esas corridas ?
+
+( tiempo estimado 30 minutos, dificultad media )

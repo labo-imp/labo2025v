@@ -1,0 +1,233 @@
+---
+title: An R Markdown document converted from "src/ensembles/z420_ArbolesAzarosos.ipynb"
+output: html_document
+---
+
+# 4. Ensembles de Arboles de Decision
+
+Un arbol de decisión es un modelo débil, el aumento del poder predictivo proviene al ensamblar varios arboles de decisión.
+<br> Si promedio n arboles identicos, el resultados es exactamente el mismo que utilizar un solo arbol, necesito PERTURBAR cada arbol para disponer de variablidad
+
+la variabilidad provendrá de estas fuentes:
+
+
+*   Perturbar el dataset
+*   Perturbar el algoritmo del arbol
+*   Perturbar el dataset y el algoritmo del arbol al mismo tiempo
+
+Se verán estos tres algoritmos
+
+
+*   Arboles Azarosos
+*   Random Forest
+*   Gradient Boosting of Decision Trees
+
+#### 4.01 Seteo del ambiente en Google Colab
+
+Esta parte se debe correr con el runtime en Python3
+<br>Ir al menu, Runtime -> Change Runtime Type -> Runtime type ->  **Python 3**
+
+Conectar la virtual machine donde esta corriendo Google Colab con el  Google Drive, para poder tener persistencia de archivos
+
+Para correr la siguiente celda es fundamental en Arranque en Frio haber copiado el archivo kaggle.json al Google Drive, en la carpeta indicada en el instructivo
+
+<br>los siguientes comando estan en shell script de Linux
+*   Crear las carpetas en el Google Drive
+*   "instalar" el archivo kaggle.json desde el Google Drive a la virtual machine para que pueda ser utilizado por la libreria  kaggle de Python
+*   Bajar el  **dataset_pequeno**  al  Google Drive  y tambien al disco local de la virtual machine que esta corriendo Google Colab
+
+
+
+
+---
+
+
+## 4.02 Arboles Azarosos
+
+Arboles Azarosos es el nombre de un algoritmo trivial (por favor NO confundir con Random Forest)
+Qué tipo de perturbaciones se realizan en Arboles Azarosos
+* Se perturba el dataset
+* No se perturba el algoritmo, es siempre rpart original
+
+Cada  arbolito de  Arboles Azarosos se entrena sobre un dataset perturbado,  que tiene exactamente la misma cantidad de registros pero solo un subconjunto de los atributos (campos)  del dataset, tomados al azar, de los originales.
+<br> En esta primera corrida, se construira cada arbol en un dataset utilizando el 50% de los campos
+
+Esta parte se debe correr con el runtime en lenguaje **R** Ir al menu, Runtime -> Change Runtime Type -> Runtime type -> R
+
+limpio el ambiente de R
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+```{r}
+# limpio la memoria
+rm(list=ls(all.names=TRUE)) # remove all objects
+gc(full=TRUE, verbose=FALSE) # garbage collection
+```
+
+```{r}
+
+## Mis semillas
+semilla_primigenia <- 310019
+
+## Working Directory
+path <- "G:/Mi unidad/Maestría en Ciencia de Datos - Universidad Austral/Materias/7. Laboratorio de implementación (martes)/Experimentos"
+path_dataset_pequeno <- paste0(path,"/datasets/dataset_pequeno.csv")
+
+
+# cargo las librerias que necesito
+require("data.table")
+require("rpart")
+```
+
+Aqui debe cargar SU semilla primigenia
+
+```{r}
+PARAM <- list()
+PARAM$semilla_primigenia <- semilla_primigenia
+
+# parametros  arbol
+# entreno cada arbol con solo 50% de las variables variables
+#  por ahora, es fijo
+PARAM$feature_fraction <- 0.5
+
+PARAM$rpart$cp <- -1
+PARAM$rpart$minsplit <- 1484
+PARAM$rpart$minbucket <- 271
+PARAM$rpart$maxdepth <- 15
+
+# voy a generar 512 arboles,
+#  a mas arboles mas tiempo de proceso y MEJOR MODELO,
+#  pero ganancias marginales
+PARAM$num_trees_max <- 32
+```
+
+```{r}
+
+setwd(path)
+experimento <- "exp/exp4020"
+dir.create(experimento)
+path_exp <- paste0(path,"/",experimento)
+
+```
+
+```{r}
+# lectura del dataset
+dataset <- fread(path_dataset_pequeno)
+```
+
+```{r}
+# defino los dataset de entrenamiento y aplicacion
+dtrain <- dataset[foto_mes == 202107]
+dfuture <- dataset[foto_mes == 202109]
+
+# arreglo clase_ternaria por algun distraido ""
+dfuture[, clase_ternaria := NA ]
+```
+
+```{r}
+# Establezco cuales son los campos que puedo usar para la prediccion
+# el copy() es por la Lazy Evaluation
+campos_buenos <- copy(setdiff(colnames(dtrain), c("clase_ternaria")))
+```
+
+```{r}
+# que tamanos de ensemble grabo a disco
+grabar <- c(1, 2, 4, 8, 16, 32, 64, 128, 256, 384, 512)
+```
+
+```{r}
+tb_prediccion <- dfuture[, list(numero_de_cliente)]
+# aqui se va acumulando la probabilidad del ensemble
+tb_prediccion[, prob_acumulada := 0]
+```
+
+```{r}
+set.seed(PARAM$semilla_primigenia) # Establezco la semilla aleatoria
+```
+
+```{r}
+setwd(path_exp)
+
+for (arbolito in seq(PARAM$num_trees_max) ) {
+  message( arbolito, " ")
+  qty_campos_a_utilizar <- as.integer(length(campos_buenos)
+    * PARAM$feature_fraction)
+
+  # elijo los campos al azar
+  campos_random <- sample(campos_buenos, qty_campos_a_utilizar)
+
+  # paso de un vector a un string con los elementos
+  # separados por un signo de "+"
+  # este hace falta para la formula
+  campos_random <- paste(campos_random, collapse= " + ")
+
+  # armo la formula para rpart
+  formulita <- paste0("clase_ternaria ~ ", campos_random)
+
+  # genero el arbol de decision
+  modelo <- rpart(formulita,
+    data= dtrain,
+    xval= 0,
+    control= PARAM$rpart
+  )
+
+  # aplico el modelo a los datos que no tienen clase
+  prediccion <- predict(modelo, dfuture, type= "prob")
+
+  tb_prediccion[, prob_acumulada := prob_acumulada + prediccion[, "BAJA+2"]]
+
+  if (arbolito %in% grabar) {
+    umbral_corte <- (1 / 40) * arbolito
+    tb_prediccion[, Predicted := as.numeric(prob_acumulada > umbral_corte)]
+
+    archivo_kaggle <- paste0(
+        "KA420_",
+        sprintf("%.3d", arbolito), # para que tenga ceros adelante
+        ".csv"
+      )
+    
+    # grabo el archivo
+    fwrite( tb_prediccion[, list(numero_de_cliente, Predicted)],
+      file= archivo_kaggle,
+      sep= ","
+    )
+
+    # subida a Kaggle
+    comando <- "kaggle competitions submit"
+    competencia <- "-c labo-i-2025-virtual-analista-sr"
+    
+    arch <- paste("-f", shQuote(file.path(path_exp, archivo_kaggle)))
+    mensaje <- paste0("-m ", shQuote(
+      paste0("cp=", PARAM$rpart$cp,
+             " minsplit=", PARAM$rpart$minsplit,
+             " minbucket=", PARAM$rpart$minbucket,
+             " maxdepth=", PARAM$rpart$maxdepth)
+        ))
+
+    
+    arch <- paste( "-f", archivo_kaggle)
+
+    mensaje <- paste0("-m 'cp=", PARAM$rpart$cp, 
+                      "  minsplit=", PARAM$rpart$minsplit, 
+                      "  minbucket=", PARAM$rpart$minbucket, 
+                      " maxdepth=", PARAM$rpart$maxdepth, "'" )
+    
+    
+    linea <- paste( comando, competencia, arch, mensaje)
+    salida <- system(linea, intern=TRUE)
+    cat(salida)
+  }
+}
+```
+
+```{r}
+format(Sys.time(), "%a %b %d %X %Y")
+```
+
+
+
+---
+
+
